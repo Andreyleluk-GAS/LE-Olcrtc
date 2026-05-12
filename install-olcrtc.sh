@@ -358,6 +358,22 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
+    # Дополнительные флаги транспорта (из документации, рекомендуемые значения)
+    case $TRANSPORT in
+        vp8channel)
+            TRANSPORT_FLAGS="-vp8-fps 60 -vp8-batch 64"
+            ;;
+        seichannel)
+            TRANSPORT_FLAGS="-fps 60 -batch 64 -frag 900 -ack-ms 2000"
+            ;;
+        videochannel)
+            TRANSPORT_FLAGS="-video-codec qrcode -video-w 1080 -video-h 1080 -video-fps 60 -video-bitrate 5000k -video-hw none"
+            ;;
+        *)
+            TRANSPORT_FLAGS=""  # datachannel — дополнительных флагов нет
+            ;;
+    esac
+
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -367,7 +383,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID" $TRANSPORT_FLAGS
 Restart=always
 RestartSec=5
 
@@ -381,9 +397,13 @@ EOF
 
     set +e
 
-    # Финальная проверка
+    # Финальная проверка (jazz требует больше времени на handshake)
     echo -e "\n${YELLOW}Выполняем проверку запуска сервера...${NC}"
-    sleep 3
+    if [[ "$PROVIDER" == "jazz" ]]; then
+        sleep 8
+    else
+        sleep 4
+    fi
 
     if systemctl is-active --quiet olcrtc; then
         echo -e "${GREEN}[✔] Служба OlcRTC успешно запущена и стабильно работает!${NC}"
@@ -403,7 +423,7 @@ EOF
     else
         echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
         echo -e "${CYAN}Последние строки лога:${NC}"
-        journalctl -u olcrtc -n 10 --no-pager
+        journalctl -u olcrtc -n 15 --no-pager
         echo -e "${RED}Проверьте ошибку выше.${NC}"
     fi
 
