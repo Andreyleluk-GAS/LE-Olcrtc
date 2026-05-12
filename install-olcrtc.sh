@@ -9,9 +9,13 @@ NC='\033[0m' # Нет цвета
 
 # Проверка на права root
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}Ошибка: Пожалуйста, запустите скрипт с правами root (sudo ./install-olcrtc.sh)${NC}"
+  echo -e "${RED}Ошибка: Пожалуйста, запустите скрипт с правами root (sudo ./install.sh)${NC}"
   exit 1
 fi
+
+# Отключаем интерактивные окна для apt-get на весь сеанс
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 
 # Функция установки
 install_olcrtc() {
@@ -116,8 +120,19 @@ install_olcrtc() {
     # Останавливаем при ошибках
     set -e
 
+    # ПРОВЕРКА ОС И ОБНОВЛЕНИЕ ПАКЕТОВ
+    echo -e "\n${CYAN}[1/7] Проверка системы и обновление пакетов ОС...${NC}"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
+            echo -e "${YELLOW}Предупреждение: Ваш дистрибутив ($ID) может не поддерживаться в полной мере. Рекомендуется Ubuntu или Debian.${NC}"
+            sleep 3
+        fi
+    fi
+    apt-get update -q && apt-get upgrade -yq
+
     # Настройка Swap
-    echo -e "\n${CYAN}[1/6] Настройка Swap (файла подкачки)...${NC}"
+    echo -e "\n${CYAN}[2/7] Настройка Swap (файла подкачки)...${NC}"
     if [ ! -f /swapfile ]; then
         fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
         chmod 600 /swapfile
@@ -130,8 +145,8 @@ install_olcrtc() {
     fi
 
     # Зависимости и Go
-    echo -e "\n${CYAN}[2/6] Установка зависимостей и Go 1.26.2...${NC}"
-    apt-get update && apt-get install -y git wget curl build-essential
+    echo -e "\n${CYAN}[3/7] Установка зависимостей и Go 1.26.2...${NC}"
+    apt-get install -yq git wget curl build-essential
     wget -qO go.tar.gz https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
     rm -rf /usr/local/go
     tar -C /usr/local -xzf go.tar.gz
@@ -139,8 +154,12 @@ install_olcrtc() {
     export PATH=$PATH:/usr/local/go/bin
     echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
 
-    # Установка Mage
-    echo -e "\n${CYAN}[3/6] Установка системы сборки Mage...${NC}"
+    # Установка Mage (с исправлением ошибки создания директории)
+    echo -e "\n${CYAN}[4/7] Установка системы сборки Mage...${NC}"
+    mkdir -p ~/go/bin # <-- ИСПРАВЛЕНИЕ ТУТ
+    export GOPATH=~/go
+    export PATH=$PATH:$GOPATH/bin
+    
     cd ~
     rm -rf mage
     git clone https://github.com/magefile/mage
@@ -148,7 +167,7 @@ install_olcrtc() {
     /usr/local/go/bin/go run bootstrap.go
     
     # Сборка OlcRTC
-    echo -e "\n${CYAN}[4/6] Скачивание и сборка OlcRTC (может занять время)...${NC}"
+    echo -e "\n${CYAN}[5/7] Скачивание и сборка OlcRTC (может занять время)...${NC}"
     cd ~
     rm -rf olcrtc
     git clone https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
@@ -157,15 +176,15 @@ install_olcrtc() {
 
     # Автоматическая генерация комнаты (если выбрано)
     if [[ "$AUTO_ROOM" == true ]]; then
-        echo -e "\n${CYAN}[5/6] Автоматическая генерация ID звонка...${NC}"
+        echo -e "\n${CYAN}[6/7] Автоматическая генерация ID звонка...${NC}"
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
         echo -e "${GREEN}Сгенерирован Room ID: $ROOM_ID${NC}"
     else
-        echo -e "\n${CYAN}[5/6] Генерация ID звонка пропущена (используется ручной ввод).${NC}"
+        echo -e "\n${CYAN}[6/7] Генерация ID звонка пропущена (используется ручной ввод).${NC}"
     fi
 
     # Настройка Systemd
-    echo -e "\n${CYAN}[6/6] Настройка системной службы...${NC}"
+    echo -e "\n${CYAN}[7/7] Настройка системной службы...${NC}"
     mkdir -p /opt/olcrtc
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
