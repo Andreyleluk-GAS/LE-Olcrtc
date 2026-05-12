@@ -260,30 +260,31 @@ install_olcrtc() {
     # [5/7] Сборка OlcRTC
     echo -e "\n${CYAN}[5/7] Сборка исполняемого файла OlcRTC...${NC}"
 
-    # --- Автоматическая очистка перед сборкой ---
+    # --- Освобождаем максимум места перед сборкой ---
     echo -e "${YELLOW}Очистка дискового пространства перед сборкой...${NC}"
-    apt-get clean -q 2>/dev/null || true                         # кэш apt
+    apt-get clean -q 2>/dev/null || true                         # кэш apt (~200-500 MB)
     apt-get autoremove -yq 2>/dev/null || true                   # ненужные пакеты
     /usr/local/go/bin/go clean -cache 2>/dev/null || true        # кэш Go-компилятора
     journalctl --vacuum-size=50M 2>/dev/null || true             # обрезать системный лог
-    rm -rf ~/go/tmp ~/go/cache                                   # tmp Go (пересоздадим ниже)
+    rm -rf ~/mage                                                # исходники mage (бинарь уже в ~/go/bin)
+    rm -rf ~/go/tmp ~/go/cache                                   # tmp/cache Go (пересоздадим ниже)
     rm -f ~/olcrtc_build.log /tmp/olcrtc_build.log 2>/dev/null  # старые логи
 
-    # --- Проверка свободного места после очистки ---
+    # --- Проверка свободного места ---
     FREE_KB=$(df / --output=avail | tail -1)
     if   [ "$FREE_KB" -ge 1048576 ]; then FREE_DISPLAY="$(( FREE_KB / 1024 / 1024 )) GB"
     elif [ "$FREE_KB" -ge 1024 ];    then FREE_DISPLAY="$(( FREE_KB / 1024 )) MB"
     else                                  FREE_DISPLAY="${FREE_KB} KB"
     fi
 
-    MIN_KB=2097152   # 2 GB — минимум для сборки Go-проекта такого размера
+    MIN_KB=716800   # ~700 MB — реальный минимум для сборки с GOTMPDIR на диске и -p=2
     if [ "$FREE_KB" -lt "$MIN_KB" ]; then
         echo -e "${RED}[✖] Недостаточно места на диске даже после очистки.${NC}"
-        echo -e "${RED}    Свободно: ${FREE_DISPLAY} | Требуется: минимум 2 GB${NC}"
-        echo -e "${YELLOW}Подсказки для освобождения места:${NC}"
-        echo -e "  df -h              — посмотреть использование диска"
-        echo -e "  du -sh /*          — найти большие каталоги"
-        echo -e "  docker system prune -af   — если используется Docker"
+        echo -e "${RED}    Свободно: ${FREE_DISPLAY} | Требуется: ~700 MB${NC}"
+        echo -e "${YELLOW}Подсказки:${NC}"
+        echo -e "  df -h                  — использование дисков"
+        echo -e "  du -sh /* 2>/dev/null  — найти большие каталоги"
+        echo -e "  docker system prune -af — если используется Docker"
         exit 1
     fi
     echo -e "${GREEN}Свободно: ${FREE_DISPLAY} — достаточно для сборки.${NC}"
@@ -294,11 +295,12 @@ install_olcrtc() {
     git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
 
-    # Перенаправляем временные файлы Go с tmpfs (/tmp) на диск
-    # Это исключает "no space left on device" при компиляции
+    # Перенаправляем tmp/cache Go с tmpfs(/tmp) на диск — исключает "no space left on device"
     mkdir -p ~/go/tmp ~/go/cache
     export GOTMPDIR=~/go/tmp
     export GOCACHE=~/go/cache
+    # Ограничиваем параллелизм сборки: меньше пиковый расход tmp на диске
+    export GOFLAGS="-p=2"
 
     BUILD_LOG=~/olcrtc_build.log
 
@@ -321,8 +323,9 @@ install_olcrtc() {
     wait $PID
     BUILD_STATUS=$?
 
-    # Очищаем tmp Go после сборки (освобождаем место для следующих шагов)
+    # Очищаем tmp Go сразу после сборки — освобождаем место для следующих шагов
     rm -rf ~/go/tmp ~/go/cache
+    unset GOFLAGS
 
     if [ $BUILD_STATUS -eq 0 ]; then
         printf "\r${GREEN}Компиляция успешно завершена!                        ${NC}\n"
@@ -336,6 +339,7 @@ install_olcrtc() {
         exit 1
     fi
     set -e
+
 
 
     # [6/7] Генерация ID комнаты (если выбрано авто)
