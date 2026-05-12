@@ -125,10 +125,11 @@ install_olcrtc() {
             done
         fi
         
+        # После этого шага возврат невозможен
         break 
     done
 
-    # Генерация учетных данных
+    # --- 4. ГЕНЕРАЦИЯ КЛЮЧЕЙ ---
     ENC_KEY=$(openssl rand -hex 32)
     CLIENT_ID=$(openssl rand -hex 4)
 
@@ -138,11 +139,11 @@ install_olcrtc() {
     
     set -e 
 
-    # [1/7] Система
+    # [1/7] Проверка системы и обновление
     echo -e "\n${CYAN}[1/7] Обновление системных пакетов...${NC}"
     apt-get update -q && apt-get upgrade -yq
 
-    # [2/7] Swap
+    # [2/7] Настройка Swap
     echo -e "\n${CYAN}[2/7] Настройка файла подкачки (Swap 2GB)...${NC}"
     if [ ! -f /swapfile ]; then
         fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -150,20 +151,21 @@ install_olcrtc() {
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
 
-    # [3/7] Go
-    echo -e "\n${CYAN}[3/7] Установка Go 1.26.2...${NC}"
+    # [3/7] Зависимости и Go
+    echo -e "\n${CYAN}[3/7] Установка Go 1.26.2 и зависимостей...${NC}"
     apt-get install -yq git wget curl build-essential
     wget -qO go.tar.gz https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
     rm -rf /usr/local/go && tar -C /usr/local -xzf go.tar.gz && rm go.tar.gz
     export PATH=$PATH:/usr/local/go/bin
+    echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
 
-    # [4/7] Mage
+    # [4/7] Система сборки Mage
     echo -e "\n${CYAN}[4/7] Установка Mage...${NC}"
     mkdir -p ~/go/bin && export GOPATH=~/go && export PATH=$PATH:$GOPATH/bin
     cd ~ && rm -rf mage && git clone -q https://github.com/magefile/mage
     cd mage && /usr/local/go/bin/go run bootstrap.go
 
-    # [5/7] Сборка
+    # [5/7] Сборка OlcRTC
     echo -e "\n${CYAN}[5/7] Сборка исполняемого файла OlcRTC...${NC}"
     cd ~ && rm -rf olcrtc && git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
@@ -179,16 +181,19 @@ install_olcrtc() {
       sleep 0.1
     done
     wait $PID
-    [[ $? -ne 0 ]] && echo -e "${RED}Ошибка сборки! Проверьте /tmp/olcrtc_build.log${NC}" && exit 1
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}Ошибка сборки! Проверьте /tmp/olcrtc_build.log${NC}"
+        exit 1
+    fi
     set -e
 
-    # [6/7] Room ID
+    # [6/7] Генерация ID комнаты (если выбрано авто)
     if [[ "$AUTO_ROOM" == true ]]; then
         echo -e "\n${CYAN}[6/7] Автоматическая генерация ID звонка...${NC}"
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
     fi
 
-    # [7/7] Systemd
+    # [7/7] Настройка Systemd
     echo -e "\n${CYAN}[7/7] Настройка системной службы...${NC}"
     mkdir -p /opt/olcrtc/data && cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
     cat <<EOF > /etc/systemd/system/olcrtc.service
@@ -209,10 +214,10 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable olcrtc && systemctl restart olcrtc
 
-    # Проверка статуса
+    # Финальная проверка
     sleep 3
     if systemctl is-active --quiet olcrtc; then
-        echo -e "${GREEN}[✔] Сервер успешно запущен и маскируется под звонок!${NC}"
+        echo -e "${GREEN}[✔] Сервер успешно запущен и стабильно работает!${NC}"
         echo -e "\n${MAGENTA}=================================================${NC}"
         echo -e "Импортируйте ссылку в мобильный Olcbox (режим TUN):"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
