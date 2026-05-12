@@ -156,23 +156,49 @@ install_olcrtc() {
 
     # Установка Mage (с исправлением ошибки создания директории)
     echo -e "\n${CYAN}[4/7] Установка системы сборки Mage...${NC}"
-    mkdir -p ~/go/bin # <-- ИСПРАВЛЕНИЕ ТУТ
+    mkdir -p ~/go/bin
     export GOPATH=~/go
     export PATH=$PATH:$GOPATH/bin
     
     cd ~
     rm -rf mage
-    git clone https://github.com/magefile/mage
+    git clone -q https://github.com/magefile/mage
     cd mage
     /usr/local/go/bin/go run bootstrap.go
     
-    # Сборка OlcRTC
-    echo -e "\n${CYAN}[5/7] Скачивание и сборка OlcRTC (может занять время)...${NC}"
+    # Сборка OlcRTC (С АНИМАЦИЕЙ)
+    echo -e "\n${CYAN}[5/7] Скачивание исходников OlcRTC...${NC}"
     cd ~
     rm -rf olcrtc
-    git clone https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
+    git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
-    ~/go/bin/mage build
+    
+    # Выключаем прерывание по ошибке, чтобы корректно обработать статус сборки
+    set +e 
+    
+    # Запускаем сборку в фоне, а весь вывод перенаправляем в лог-файл
+    ~/go/bin/mage build > /tmp/olcrtc_build.log 2>&1 &
+    PID=$!
+    
+    # Анимация "крутилки" (spinner)
+    spin='-\|/'
+    i=0
+    while kill -0 $PID 2>/dev/null; do
+      i=$(( (i+1) %4 ))
+      printf "\r${YELLOW}Компиляция бинарного файла (это займет 2-5 минут)... %c${NC}" "${spin:$i:1}"
+      sleep 0.1
+    done
+    
+    # Проверяем успешность сборки
+    wait $PID
+    if [ $? -eq 0 ]; then
+        printf "\r${GREEN}Компиляция бинарного файла (это займет 2-5 минут)... Успешно!${NC} \n"
+    else
+        printf "\r${RED}Компиляция завершилась с ошибкой!                            ${NC} \n"
+        echo -e "${RED}Подробности можно посмотреть в логе: /tmp/olcrtc_build.log${NC}"
+        exit 1
+    fi
+    set -e # Включаем обратно
 
     # Автоматическая генерация комнаты (если выбрано)
     if [[ "$AUTO_ROOM" == true ]]; then
@@ -197,7 +223,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -room "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
@@ -222,7 +248,7 @@ EOF
     echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "URI для быстрого импорта:"
-    echo -e "${YELLOW}olcrtc://$PROVIDER:$TRANSPORT@?room=$ROOM_ID&key=$ENC_KEY&client-id=$CLIENT_ID${NC}"
+    echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
     echo -e "${CYAN}=================================================${NC}"
     
     read -p "Нажмите Enter, чтобы вернуться в меню..."
