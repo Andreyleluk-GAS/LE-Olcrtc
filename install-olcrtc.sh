@@ -259,22 +259,44 @@ install_olcrtc() {
 
     # [5/7] Сборка OlcRTC
     echo -e "\n${CYAN}[5/7] Сборка исполняемого файла OlcRTC...${NC}"
+
+    # --- Автоматическая очистка перед сборкой ---
+    echo -e "${YELLOW}Очистка дискового пространства перед сборкой...${NC}"
+    apt-get clean -q 2>/dev/null || true                         # кэш apt
+    apt-get autoremove -yq 2>/dev/null || true                   # ненужные пакеты
+    /usr/local/go/bin/go clean -cache 2>/dev/null || true        # кэш Go-компилятора
+    journalctl --vacuum-size=50M 2>/dev/null || true             # обрезать системный лог
+    rm -rf ~/go/tmp ~/go/cache                                   # tmp Go (пересоздадим ниже)
+    rm -f ~/olcrtc_build.log /tmp/olcrtc_build.log 2>/dev/null  # старые логи
+
+    # --- Проверка свободного места после очистки ---
+    FREE_KB=$(df / --output=avail | tail -1)
+    if   [ "$FREE_KB" -ge 1048576 ]; then FREE_DISPLAY="$(( FREE_KB / 1024 / 1024 )) GB"
+    elif [ "$FREE_KB" -ge 1024 ];    then FREE_DISPLAY="$(( FREE_KB / 1024 )) MB"
+    else                                  FREE_DISPLAY="${FREE_KB} KB"
+    fi
+
+    MIN_KB=2097152   # 2 GB — минимум для сборки Go-проекта такого размера
+    if [ "$FREE_KB" -lt "$MIN_KB" ]; then
+        echo -e "${RED}[✖] Недостаточно места на диске даже после очистки.${NC}"
+        echo -e "${RED}    Свободно: ${FREE_DISPLAY} | Требуется: минимум 2 GB${NC}"
+        echo -e "${YELLOW}Подсказки для освобождения места:${NC}"
+        echo -e "  df -h              — посмотреть использование диска"
+        echo -e "  du -sh /*          — найти большие каталоги"
+        echo -e "  docker system prune -af   — если используется Docker"
+        exit 1
+    fi
+    echo -e "${GREEN}Свободно: ${FREE_DISPLAY} — достаточно для сборки.${NC}"
+
+    # --- Клонирование исходников ---
     cd ~
     rm -rf olcrtc
     git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
 
-    # Проверка свободного места (Go-сборка требует ~1.5GB в tmp + ~500MB для бинарника)
-    FREE_KB=$(df / --output=avail | tail -1)
-    FREE_GB=$(( FREE_KB / 1024 / 1024 ))
-    if [ "$FREE_KB" -lt 2097152 ]; then   # менее 2 GB
-        echo -e "${RED}[!] Недостаточно места на диске: ~${FREE_GB}GB свободно.${NC}"
-        echo -e "${RED}    Требуется минимум 2GB. Освободите место и запустите снова.${NC}"
-        exit 1
-    fi
-
-    # Перенаправляем временные файлы Go со сжатого /tmp на диск (root-cause "no space left on device")
-    mkdir -p ~/go/tmp
+    # Перенаправляем временные файлы Go с tmpfs (/tmp) на диск
+    # Это исключает "no space left on device" при компиляции
+    mkdir -p ~/go/tmp ~/go/cache
     export GOTMPDIR=~/go/tmp
     export GOCACHE=~/go/cache
 
@@ -297,16 +319,24 @@ install_olcrtc() {
     done
 
     wait $PID
-    if [ $? -eq 0 ]; then
+    BUILD_STATUS=$?
+
+    # Очищаем tmp Go после сборки (освобождаем место для следующих шагов)
+    rm -rf ~/go/tmp ~/go/cache
+
+    if [ $BUILD_STATUS -eq 0 ]; then
         printf "\r${GREEN}Компиляция успешно завершена!                        ${NC}\n"
         rm -f "$BUILD_LOG"
     else
         printf "\r${RED}Ошибка компиляции!                                   ${NC}\n"
-        echo -e "${RED}Подробности: $BUILD_LOG${NC}"
-        tail -20 "$BUILD_LOG"
+        echo -e "${RED}━━━ Последние строки лога ━━━${NC}"
+        tail -25 "$BUILD_LOG"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}Полный лог: $BUILD_LOG${NC}"
         exit 1
     fi
     set -e
+
 
     # [6/7] Генерация ID комнаты (если выбрано авто)
     if [[ "$AUTO_ROOM" == true ]]; then
