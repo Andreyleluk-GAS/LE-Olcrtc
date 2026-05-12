@@ -59,22 +59,55 @@ install_olcrtc() {
         esac
 
         # --- 2. ВЫБОР ТРАНСПОРТА ---
+        # Матрица совместимости: + работает | * работает но нежелательно | - не поддерживается
         echo -e "\n${CYAN}Шаг 2: Выберите тип транспорта:${NC}"
-        echo -e " 1) datachannel  (максимальная скорость) [по умолчанию]"
-        echo -e " 2) vp8channel   (высокая скорость)"
-        echo -e " 3) seichannel   (средняя скорость)"
-        echo -e " 4) videochannel (низкая скорость)"
-        echo -e " 0) Назад в главное меню"
-        read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
 
-        [[ "$trans_choice" == "0" ]] && return
+        if [[ "$PROVIDER" == "wbstream" ]]; then
+            echo -e " 1) datachannel  ${GREEN}[рекомендуется — максимальная скорость]${NC}"
+            echo -e " 2) vp8channel   (высокая скорость)"
+            echo -e " 3) seichannel   (средняя скорость)"
+            echo -e " 4) videochannel (низкая скорость)"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return
+            case $trans_choice in
+                2) TRANSPORT="vp8channel" ;;
+                3) TRANSPORT="seichannel" ;;
+                4) TRANSPORT="videochannel" ;;
+                *) TRANSPORT="datachannel" ;;
+            esac
 
-        case $trans_choice in
-            2) TRANSPORT="vp8channel" ;;
-            3) TRANSPORT="seichannel" ;;
-            4) TRANSPORT="videochannel" ;;
-            *) TRANSPORT="datachannel" ;;
-        esac
+        elif [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "${YELLOW}⚠ Для Jazz провайдера:${NC}"
+            echo -e "  ${RED}datachannel — Jazz моментально банит IP за этот паттерн трафика!${NC}"
+            echo -e "  ${GREEN}Рекомендуется vp8channel или seichannel.${NC}\n"
+            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
+            echo -e " 2) seichannel   (средняя скорость)"
+            echo -e " 3) videochannel (низкая скорость)"
+            echo -e " 4) datachannel  ${RED}[⚠ Jazz забанит IP — не рекомендуется]${NC}"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return
+            case $trans_choice in
+                2) TRANSPORT="seichannel" ;;
+                3) TRANSPORT="videochannel" ;;
+                4) TRANSPORT="datachannel" ;;
+                *) TRANSPORT="vp8channel" ;;
+            esac
+
+        elif [[ "$PROVIDER" == "telemost" ]]; then
+            echo -e "${YELLOW}⚠ Для Telemost провайдера:${NC}"
+            echo -e "  ${RED}datachannel и seichannel — не поддерживаются Telemost!${NC}\n"
+            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
+            echo -e " 2) videochannel (низкая скорость)"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-2) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return
+            case $trans_choice in
+                2) TRANSPORT="videochannel" ;;
+                *) TRANSPORT="vp8channel" ;;
+            esac
+        fi
 
         # --- 3. ВЫБОР ID ЗВОНКА ---
         echo -e "\n${CYAN}Шаг 3: Настройка ID звонка (комнаты):${NC}"
@@ -204,9 +237,9 @@ install_olcrtc() {
     fi
 
     # [3/7] Зависимости и Go
-    echo -e "\n${CYAN}[3/7] Установка Go 1.24.3 и зависимостей...${NC}"
+    echo -e "\n${CYAN}[3/7] Установка Go 1.26.3 и зависимостей...${NC}"
     apt-get install -yq git wget curl build-essential
-    wget -qO go.tar.gz https://go.dev/dl/go1.24.3.linux-amd64.tar.gz
+    wget -qO go.tar.gz https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
     rm -rf /usr/local/go
     tar -C /usr/local -xzf go.tar.gz
     rm go.tar.gz
