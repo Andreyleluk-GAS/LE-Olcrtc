@@ -264,11 +264,27 @@ install_olcrtc() {
     git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
 
+    # Проверка свободного места (Go-сборка требует ~1.5GB в tmp + ~500MB для бинарника)
+    FREE_KB=$(df / --output=avail | tail -1)
+    FREE_GB=$(( FREE_KB / 1024 / 1024 ))
+    if [ "$FREE_KB" -lt 2097152 ]; then   # менее 2 GB
+        echo -e "${RED}[!] Недостаточно места на диске: ~${FREE_GB}GB свободно.${NC}"
+        echo -e "${RED}    Требуется минимум 2GB. Освободите место и запустите снова.${NC}"
+        exit 1
+    fi
+
+    # Перенаправляем временные файлы Go со сжатого /tmp на диск (root-cause "no space left on device")
+    mkdir -p ~/go/tmp
+    export GOTMPDIR=~/go/tmp
+    export GOCACHE=~/go/cache
+
+    BUILD_LOG=~/olcrtc_build.log
+
     # Выключаем прерывание по ошибке, чтобы корректно обработать статус сборки
     set +e
 
     # Запускаем сборку в фоне, весь вывод — в лог-файл
-    ~/go/bin/mage build > /tmp/olcrtc_build.log 2>&1 &
+    ~/go/bin/mage build > "$BUILD_LOG" 2>&1 &
     PID=$!
 
     # Анимация spinner
@@ -283,9 +299,11 @@ install_olcrtc() {
     wait $PID
     if [ $? -eq 0 ]; then
         printf "\r${GREEN}Компиляция успешно завершена!                        ${NC}\n"
+        rm -f "$BUILD_LOG"
     else
         printf "\r${RED}Ошибка компиляции!                                   ${NC}\n"
-        echo -e "${RED}Подробности: /tmp/olcrtc_build.log${NC}"
+        echo -e "${RED}Подробности: $BUILD_LOG${NC}"
+        tail -20 "$BUILD_LOG"
         exit 1
     fi
     set -e
