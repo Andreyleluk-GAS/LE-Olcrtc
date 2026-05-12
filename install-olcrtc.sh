@@ -214,7 +214,7 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # ИСПРАВЛЕНИЕ: Добавлены параметры -link direct и -dns 1.1.1.1:53
+    # ИСПРАВЛЕНИЕ: Добавлен параметр -data data
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -224,7 +224,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
