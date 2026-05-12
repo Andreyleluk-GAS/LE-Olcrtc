@@ -20,8 +20,17 @@ install_olcrtc() {
     echo -e "${CYAN}=================================================${NC}"
 
     # 1. Запрос конфигурации
-    read -p "Провайдер (wbstream, telemost, jazz) [по умолчанию wbstream]: " PROVIDER
-    PROVIDER=${PROVIDER:-wbstream}
+    echo -e "Выберите провайдера:"
+    echo -e " 1) wbstream (по умолчанию)"
+    echo -e " 2) telemost"
+    echo -e " 3) jazz"
+    read -p "Ваш выбор (1-3) [по умолчанию 1]: " prov_choice
+
+    case $prov_choice in
+        2) PROVIDER="telemost" ;;
+        3) PROVIDER="jazz" ;;
+        *) PROVIDER="wbstream" ;;
+    esac
 
     read -p "Транспорт (datachannel, vp8channel) [по умолчанию datachannel]: " TRANSPORT
     TRANSPORT=${TRANSPORT:-datachannel}
