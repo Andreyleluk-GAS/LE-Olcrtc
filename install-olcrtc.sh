@@ -214,7 +214,7 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # ИСПРАВЛЕНИЕ: Добавлен параметр -link direct
+    # ИСПРАВЛЕНИЕ: Добавлены параметры -link direct и -dns 1.1.1.1:53
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -224,7 +224,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
@@ -238,19 +238,32 @@ EOF
 
     set +e # Отключаем прерывание при ошибках
 
-    echo -e "\n${GREEN}=================================================${NC}"
-    echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
-    echo -e "${GREEN}=================================================${NC}"
-    echo -e "Ваши данные для подключения в клиенте (Olcbox):"
-    echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
-    echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
-    echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
-    echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
-    echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "URI для быстрого импорта:"
-    echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
-    echo -e "${CYAN}=================================================${NC}"
+    # --- АВТОМАТИЧЕСКАЯ ПРОВЕРКА РАБОТОСПОСОБНОСТИ (HEALTH CHECK) ---
+    echo -e "\n${YELLOW}Выполняем проверку запуска сервера...${NC}"
+    sleep 3 # Ждем 3 секунды, чтобы дать службе упасть, если конфиг кривой
+    
+    if systemctl is-active --quiet olcrtc; then
+        echo -e "${GREEN}[✔] Служба OlcRTC успешно запущена и стабильно работает!${NC}"
+        
+        echo -e "\n${GREEN}=================================================${NC}"
+        echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
+        echo -e "${GREEN}=================================================${NC}"
+        echo -e "Ваши данные для подключения в клиенте (Olcbox):"
+        echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
+        echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
+        echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
+        echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
+        echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
+        echo -e "${CYAN}=================================================${NC}"
+        echo -e "URI для быстрого импорта:"
+        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
+        echo -e "${CYAN}=================================================${NC}"
+    else
+        echo -e "${RED}[✖] ОШИБКА: Служба OlcRTC попыталась запуститься, но упала!${NC}"
+        echo -e "${CYAN}Последние строки лога с ошибкой:${NC}"
+        journalctl -u olcrtc -n 5 --no-pager
+        echo -e "${RED}Пожалуйста, проверьте ошибку выше. Возможно, разработчики снова изменили параметры запуска.${NC}"
+    fi
     
     read -p "Нажмите Enter, чтобы вернуться в меню..."
 }
