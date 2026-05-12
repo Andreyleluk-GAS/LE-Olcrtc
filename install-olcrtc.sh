@@ -49,7 +49,7 @@ install_olcrtc() {
         echo -e " 0) Назад в главное меню"
         read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
         
-        [[ "$prov_choice" == "0" ]] && return # Возврат в главное меню
+        [[ "$prov_choice" == "0" ]] && return 
 
         case $prov_choice in
             2) PROVIDER="telemost" ;;
@@ -78,13 +78,18 @@ install_olcrtc() {
         # --- 3. ВЫБОР ID ЗВОНКА ---
         echo -e "\n${CYAN}Шаг 3: Настройка ID звонка (комнаты):${NC}"
         echo -e "${YELLOW}💡 Как получить ID звонка?${NC}"
-        echo -e "Это ID реальной видеоконференции, внутри которой будет спрятан ваш трафик."
-        echo -e "Использование 'живой' комнаты, созданной вручную, дает лучшую маскировку.\n"
+        echo -e "ID звонка — это идентификатор конференции, внутри которой прячется трафик."
+        echo -e "Использование реальной комнаты вручную дает лучшую маскировку.\n"
         
-        echo -e "Создайте комнату и скопируйте ID из адресной строки:"
+        echo -e "Создайте комнату и скопируйте ID из ссылки:"
         echo -e " ▶ ${CYAN}WB Stream:${NC}       https://stream.wb.ru/room/${YELLOW}[ваш_id]${NC}"
         echo -e " ▶ ${CYAN}Yandex Telemost:${NC} https://telemost.yandex.ru/j/${YELLOW}[ваш_id]${NC}"
         echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/${YELLOW}[ваш_id]${NC}\n"
+
+        echo -e "${MAGENTA}-------------------------------------------------${NC}"
+        echo -e "${GREEN}✔ Для WB Stream и SaluteJazz доступна автогенерация ID.${NC}"
+        echo -e "${RED}✘ Для Yandex Telemost ID нужно создать и ввести вручную.${NC}"
+        echo -e "${MAGENTA}-------------------------------------------------${NC}\n"
 
         if [[ "$PROVIDER" == "wbstream" || "$PROVIDER" == "jazz" ]]; then
             echo -e " 1) Сгенерировать ID автоматически (рекомендуется)"
@@ -105,7 +110,7 @@ install_olcrtc() {
                 AUTO_ROOM=true
             fi
         else
-            echo -e "${YELLOW}Для Telemost доступен только ручной ввод ID звонка.${NC}"
+            echo -e "${YELLOW}Выбран Telemost: автогенерация недоступна.${NC}"
             echo -e " 1) Ввести ID звонка вручную"
             echo -e " 0) Назад в главное меню"
             read -p "Ваш выбор (0-1) [по умолчанию 1]: " room_choice
@@ -119,22 +124,21 @@ install_olcrtc() {
             done
         fi
         
-        # ЕСЛИ ДОШЛИ СЮДА — НАЧИНАЕТСЯ УСТАНОВКА (Точка невозврата)
         break 
     done
 
-    # --- 4. КЛЮЧ И КЛИЕНТ (Автоматически) ---
+    # Автогенерация ключей
     ENC_KEY=$(openssl rand -hex 32)
     CLIENT_ID=$(openssl rand -hex 4)
 
     echo -e "\n${MAGENTA}=================================================${NC}"
-    echo -e "${YELLOW}Конфигурация принята. Начинаем установку...${NC}"
+    echo -e "${YELLOW}Установка запущена. Не закрывайте терминал...${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
     
-    set -e # Прерывать при ошибках
+    set -e 
 
-    # [1/7] ОС и Обновление
-    echo -e "\n${CYAN}[1/7] Обновление пакетов ОС...${NC}"
+    # [1/7] Обновление
+    echo -e "\n${CYAN}[1/7] Обновление системы...${NC}"
     apt-get update -q && apt-get upgrade -yq
 
     # [2/7] Swap
@@ -158,7 +162,7 @@ install_olcrtc() {
     cd ~ && rm -rf mage && git clone -q https://github.com/magefile/mage
     cd mage && /usr/local/go/bin/go run bootstrap.go
 
-    # [5/7] Сборка OlcRTC
+    # [5/7] Сборка
     echo -e "\n${CYAN}[5/7] Сборка OlcRTC...${NC}"
     cd ~ && rm -rf olcrtc && git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
@@ -170,11 +174,11 @@ install_olcrtc() {
     i=0
     while kill -0 $PID 2>/dev/null; do
       i=$(( (i+1) %4 ))
-      printf "\r${YELLOW}Компиляция (2-5 мин)... %c${NC}" "${spin:$i:1}"
+      printf "\r${YELLOW}Компиляция... %c${NC}" "${spin:$i:1}"
       sleep 0.1
     done
     wait $PID
-    [[ $? -ne 0 ]] && echo -e "${RED}Ошибка сборки! Лог: /tmp/olcrtc_build.log${NC}" && exit 1
+    [[ $? -ne 0 ]] && echo -e "${RED}Ошибка! См. /tmp/olcrtc_build.log${NC}" && exit 1
     set -e
 
     # [6/7] Room ID
@@ -183,8 +187,8 @@ install_olcrtc() {
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
     fi
 
-    # [7/7] Service
-    echo -e "\n${CYAN}[7/7] Запуск службы...${NC}"
+    # [7/7] Служба
+    echo -e "\n${CYAN}[7/7] Настройка службы...${NC}"
     mkdir -p /opt/olcrtc/data && cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
@@ -204,30 +208,30 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable olcrtc && systemctl restart olcrtc
 
-    # Health Check
+    # Проверка
     sleep 3
     if systemctl is-active --quiet olcrtc; then
-        echo -e "${GREEN}[✔] Сервер успешно запущен!${NC}"
+        echo -e "${GREEN}[✔] Сервер в сети!${NC}"
         echo -e "\n${MAGENTA}=================================================${NC}"
-        echo -e "URI для импорта в Olcbox (режим TUN):"
+        echo -e "Импортируйте ссылку в Olcbox (режим TUN):"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
     else
-        echo -e "${RED}[✖] Ошибка запуска! Проверьте логи (пункт 3).${NC}"
+        echo -e "${RED}[✖] Ошибка запуска! См. пункт 3 в меню.${NC}"
     fi
-    read -p "Нажмите Enter для возврата..."
+    read -p "Enter для возврата..."
 }
 
-# Функция удаления (сокращена для краткости, логика та же)
+# Функция удаления
 uninstall_olcrtc() {
     print_logo
-    echo -e "${RED}Удаление всех компонентов OlcRTC...${NC}"
+    echo -e "${RED}Полное удаление OlcRTC...${NC}"
     systemctl stop olcrtc 2>/dev/null || true
     systemctl disable olcrtc 2>/dev/null || true
     rm -rf /etc/systemd/system/olcrtc.service /opt/olcrtc ~/olcrtc ~/mage
     systemctl daemon-reload
-    echo -e "${GREEN}Готово!${NC}"
-    read -p "Нажмите Enter..."
+    echo -e "${GREEN}Удалено успешно.${NC}"
+    read -p "Enter..."
 }
 
 # Главное меню
