@@ -154,7 +154,7 @@ install_olcrtc() {
     export PATH=$PATH:/usr/local/go/bin
     echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
 
-    # Установка Mage (с исправлением ошибки создания директории)
+    # Установка Mage
     echo -e "\n${CYAN}[4/7] Установка системы сборки Mage...${NC}"
     mkdir -p ~/go/bin
     export GOPATH=~/go
@@ -166,7 +166,7 @@ install_olcrtc() {
     cd mage
     /usr/local/go/bin/go run bootstrap.go
     
-    # Сборка OlcRTC (С АНИМАЦИЕЙ)
+    # Сборка OlcRTC
     echo -e "\n${CYAN}[5/7] Скачивание исходников OlcRTC...${NC}"
     cd ~
     rm -rf olcrtc
@@ -214,6 +214,7 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
+    # ИСПРАВЛЕНИЕ: Добавлен параметр -link direct
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -223,7 +224,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
