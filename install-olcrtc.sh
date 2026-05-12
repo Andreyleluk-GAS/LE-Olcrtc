@@ -173,10 +173,10 @@ install_olcrtc() {
     git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
     
-    # Выключаем прерывание по ошибке, чтобы корректно обработать статус сборки
+    # Выключаем прерывание по ошибке
     set +e 
     
-    # Запускаем сборку в фоне, а весь вывод перенаправляем в лог-файл
+    # Запускаем сборку в фоне
     ~/go/bin/mage build > /tmp/olcrtc_build.log 2>&1 &
     PID=$!
     
@@ -200,7 +200,7 @@ install_olcrtc() {
     fi
     set -e # Включаем обратно
 
-    # Автоматическая генерация комнаты (если выбрано)
+    # Автоматическая генерация комнаты
     if [[ "$AUTO_ROOM" == true ]]; then
         echo -e "\n${CYAN}[6/7] Автоматическая генерация ID звонка...${NC}"
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
@@ -211,10 +211,12 @@ install_olcrtc() {
 
     # Настройка Systemd
     echo -e "\n${CYAN}[7/7] Настройка системной службы...${NC}"
-    mkdir -p /opt/olcrtc
+    
+    # ЖЕЛЕЗОБЕТОННОЕ СОЗДАНИЕ ПАПКИ DATA
+    mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # ИСПРАВЛЕНИЕ: Добавлен параметр -data data
+    # ИСПРАВЛЕНИЕ: Абсолютный путь к data (-data /opt/olcrtc/data)
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -224,7 +226,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data /opt/olcrtc/data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
@@ -240,7 +242,7 @@ EOF
 
     # --- АВТОМАТИЧЕСКАЯ ПРОВЕРКА РАБОТОСПОСОБНОСТИ (HEALTH CHECK) ---
     echo -e "\n${YELLOW}Выполняем проверку запуска сервера...${NC}"
-    sleep 3 # Ждем 3 секунды, чтобы дать службе упасть, если конфиг кривой
+    sleep 3 # Ждем 3 секунды
     
     if systemctl is-active --quiet olcrtc; then
         echo -e "${GREEN}[✔] Служба OlcRTC успешно запущена и стабильно работает!${NC}"
@@ -262,7 +264,7 @@ EOF
         echo -e "${RED}[✖] ОШИБКА: Служба OlcRTC попыталась запуститься, но упала!${NC}"
         echo -e "${CYAN}Последние строки лога с ошибкой:${NC}"
         journalctl -u olcrtc -n 5 --no-pager
-        echo -e "${RED}Пожалуйста, проверьте ошибку выше. Возможно, разработчики снова изменили параметры запуска.${NC}"
+        echo -e "${RED}Пожалуйста, проверьте ошибку выше.${NC}"
     fi
     
     read -p "Нажмите Enter, чтобы вернуться в меню..."
