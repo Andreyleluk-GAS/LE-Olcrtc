@@ -423,8 +423,49 @@ EOF
     else
         echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
         echo -e "${CYAN}Последние строки лога:${NC}"
-        journalctl -u olcrtc -n 15 --no-pager
-        echo -e "${RED}Проверьте ошибку выше.${NC}"
+        RECENT_LOG=$(journalctl -u olcrtc -n 15 --no-pager 2>/dev/null)
+        echo "$RECENT_LOG"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        # --- Автоматический анализ ошибки ---
+        echo -e "${YELLOW}⚠ Диагностика:${NC}"
+
+        if echo "$RECENT_LOG" | grep -q "status 400" && [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "${RED}  Причина: Jazz API (salutejazz.ru) отклонил подключение (HTTP 400).${NC}"
+            echo -e "${YELLOW}  Это внешняя проблема — IP вашего VPS заблокирован Jazz,${NC}"
+            echo -e "${YELLOW}  либо Jazz изменил свой API.${NC}"
+            echo -e "${GREEN}  Решение: запустите установку снова и выберите провайдер wbstream.${NC}"
+            echo -e "${GREEN}           wbstream — самый стабильный провайдер, без банов.${NC}"
+
+        elif echo "$RECENT_LOG" | grep -q "status 400" && [[ "$PROVIDER" == "telemost" ]]; then
+            echo -e "${RED}  Причина: Telemost API отклонил подключение (HTTP 400).${NC}"
+            echo -e "${YELLOW}  Возможно, Room ID создан вручную неправильно,${NC}"
+            echo -e "${YELLOW}  или Telemost изменил API.${NC}"
+            echo -e "${GREEN}  Решение: создайте новую комнату на telemost.yandex.ru и переустановите.${NC}"
+
+        elif echo "$RECENT_LOG" | grep -q "i/o timeout"; then
+            echo -e "${RED}  Причина: DNS недоступен или VPS заблокировал исходящие соединения.${NC}"
+            echo -e "${GREEN}  Решение 1: переустановите с DNS 8.8.8.8:53 вместо 1.1.1.1:53.${NC}"
+            echo -e "${GREEN}  Решение 2: проверьте iptables/ufw на VPS.${NC}"
+
+        elif echo "$RECENT_LOG" | grep -q "vp8 fps required"; then
+            echo -e "${RED}  Причина: старая запись из лога (до исправления скрипта).${NC}"
+            echo -e "${GREEN}  Решение: перезапустите установку — этот баг уже исправлен.${NC}"
+
+        elif echo "$RECENT_LOG" | grep -q "dial tcp.*refused"; then
+            echo -e "${RED}  Причина: VPS не может подключиться к SFU провайдера.${NC}"
+            echo -e "${GREEN}  Решение: проверьте исходящий доступ к интернету с VPS.${NC}"
+
+        else
+            echo -e "${YELLOW}  Неизвестная ошибка. Полный лог: journalctl -u olcrtc -n 50${NC}"
+        fi
+
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "\n${YELLOW}Ваши данные (сохраните на случай переустановки):${NC}"
+        echo -e "  Провайдер:  ${YELLOW}$PROVIDER${NC}  Транспорт: ${YELLOW}$TRANSPORT${NC}"
+        echo -e "  Room ID:    ${YELLOW}$ROOM_ID${NC}"
+        echo -e "  Ключ:       ${YELLOW}$ENC_KEY${NC}"
+        echo -e "  Client ID:  ${YELLOW}$CLIENT_ID${NC}"
     fi
 
     read -p "Нажмите Enter для возврата в меню..."
