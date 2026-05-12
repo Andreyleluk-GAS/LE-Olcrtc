@@ -23,12 +23,13 @@ print_logo() {
     clear
     echo -e "${CYAN}"
     cat << "EOF"
-   ____  _       _____ _______ _____ 
-  / __ \| |     |  __ \__   __/ ____|
- | |  | | | ___ | |__) | | | | |     
- | |  | | |/ __||  _  /  | | | |     
- | |__| | | (__ | | \ \  | | | |____ 
-  \____/|_|\___||_|  \_\ |_|  \_____|
+   ____  _       _____  _______ _____ 
+  / __ \| |     |  __ \|__   __/ ____|
+ | |  | | | ___ | |__) |  | | | |     
+ | |  | | |/ __||  _  /   | | | |     
+ | |__| | | (__ | | \ \   | | | |____ 
+  \____/|_|\___||_|  \_\  |_|  \_____|
+                                      
 EOF
     echo -e "${NC}"
 }
@@ -43,9 +44,9 @@ install_olcrtc() {
 
         # --- 1. ВЫБОР ПРОВАЙДЕРА ---
         echo -e "${CYAN}Шаг 1: Выберите провайдера:${NC}"
-        echo -e " 1) wbstream (по умолчанию)"
-        echo -e " 2) telemost"
-        echo -e " 3) jazz"
+        echo -e " 1) wbstream (Wildberries - рекомендуется)"
+        echo -e " 2) telemost (Yandex)"
+        echo -e " 3) jazz     (Sber SaluteJazz)"
         echo -e " 0) Назад в главное меню"
         read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
         
@@ -81,7 +82,7 @@ install_olcrtc() {
         echo -e "ID звонка — это идентификатор конференции, внутри которой прячется трафик."
         echo -e "Использование реальной комнаты вручную дает лучшую маскировку.\n"
         
-        echo -e "Создайте комнату и скопируйте ID из ссылки:"
+        echo -e "Создайте комнату и скопируйте ID (код в конце ссылки):"
         echo -e " ▶ ${CYAN}WB Stream:${NC}       https://stream.wb.ru/room/${YELLOW}[ваш_id]${NC}"
         echo -e " ▶ ${CYAN}Yandex Telemost:${NC} https://telemost.yandex.ru/j/${YELLOW}[ваш_id]${NC}"
         echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/${YELLOW}[ваш_id]${NC}\n"
@@ -127,22 +128,22 @@ install_olcrtc() {
         break 
     done
 
-    # Автогенерация ключей
+    # Генерация учетных данных
     ENC_KEY=$(openssl rand -hex 32)
     CLIENT_ID=$(openssl rand -hex 4)
 
     echo -e "\n${MAGENTA}=================================================${NC}"
-    echo -e "${YELLOW}Установка запущена. Не закрывайте терминал...${NC}"
+    echo -e "${YELLOW}Конфигурация завершена. Начинаем установку...${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
     
     set -e 
 
-    # [1/7] Обновление
-    echo -e "\n${CYAN}[1/7] Обновление системы...${NC}"
+    # [1/7] Система
+    echo -e "\n${CYAN}[1/7] Обновление системных пакетов...${NC}"
     apt-get update -q && apt-get upgrade -yq
 
     # [2/7] Swap
-    echo -e "\n${CYAN}[2/7] Настройка Swap (2GB)...${NC}"
+    echo -e "\n${CYAN}[2/7] Настройка файла подкачки (Swap 2GB)...${NC}"
     if [ ! -f /swapfile ]; then
         fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
         chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
@@ -163,7 +164,7 @@ install_olcrtc() {
     cd mage && /usr/local/go/bin/go run bootstrap.go
 
     # [5/7] Сборка
-    echo -e "\n${CYAN}[5/7] Сборка OlcRTC...${NC}"
+    echo -e "\n${CYAN}[5/7] Сборка исполняемого файла OlcRTC...${NC}"
     cd ~ && rm -rf olcrtc && git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
     
@@ -174,25 +175,25 @@ install_olcrtc() {
     i=0
     while kill -0 $PID 2>/dev/null; do
       i=$(( (i+1) %4 ))
-      printf "\r${YELLOW}Компиляция... %c${NC}" "${spin:$i:1}"
+      printf "\r${YELLOW}Компиляция в процессе... %c${NC}" "${spin:$i:1}"
       sleep 0.1
     done
     wait $PID
-    [[ $? -ne 0 ]] && echo -e "${RED}Ошибка! См. /tmp/olcrtc_build.log${NC}" && exit 1
+    [[ $? -ne 0 ]] && echo -e "${RED}Ошибка сборки! Проверьте /tmp/olcrtc_build.log${NC}" && exit 1
     set -e
 
     # [6/7] Room ID
     if [[ "$AUTO_ROOM" == true ]]; then
-        echo -e "\n${CYAN}[6/7] Генерация ID...${NC}"
+        echo -e "\n${CYAN}[6/7] Автоматическая генерация ID звонка...${NC}"
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
     fi
 
-    # [7/7] Служба
-    echo -e "\n${CYAN}[7/7] Настройка службы...${NC}"
+    # [7/7] Systemd
+    echo -e "\n${CYAN}[7/7] Настройка системной службы...${NC}"
     mkdir -p /opt/olcrtc/data && cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
-Description=OlcRTC Proxy
+Description=OlcRTC Proxy Service
 After=network.target
 
 [Service]
@@ -208,30 +209,30 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload && systemctl enable olcrtc && systemctl restart olcrtc
 
-    # Проверка
+    # Проверка статуса
     sleep 3
     if systemctl is-active --quiet olcrtc; then
-        echo -e "${GREEN}[✔] Сервер в сети!${NC}"
+        echo -e "${GREEN}[✔] Сервер успешно запущен и маскируется под звонок!${NC}"
         echo -e "\n${MAGENTA}=================================================${NC}"
-        echo -e "Импортируйте ссылку в Olcbox (режим TUN):"
+        echo -e "Импортируйте ссылку в мобильный Olcbox (режим TUN):"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
     else
-        echo -e "${RED}[✖] Ошибка запуска! См. пункт 3 в меню.${NC}"
+        echo -e "${RED}[✖] Ошибка запуска! Проверьте логи в главном меню.${NC}"
     fi
-    read -p "Enter для возврата..."
+    read -p "Нажмите Enter для возврата..."
 }
 
 # Функция удаления
 uninstall_olcrtc() {
     print_logo
-    echo -e "${RED}Полное удаление OlcRTC...${NC}"
+    echo -e "${RED}Выполняется полное удаление всех компонентов OlcRTC...${NC}"
     systemctl stop olcrtc 2>/dev/null || true
     systemctl disable olcrtc 2>/dev/null || true
     rm -rf /etc/systemd/system/olcrtc.service /opt/olcrtc ~/olcrtc ~/mage
     systemctl daemon-reload
-    echo -e "${GREEN}Удалено успешно.${NC}"
-    read -p "Enter..."
+    echo -e "${GREEN}Все компоненты удалены. Система чиста.${NC}"
+    read -p "Нажмите Enter для возврата..."
 }
 
 # Главное меню
@@ -241,8 +242,8 @@ while true; do
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e " ${GREEN}1)${NC} Установить OlcRTC"
     echo -e " ${RED}2)${NC} Удалить OlcRTC"
-    echo -e " ${CYAN}3)${NC} Логи сервера"
-    echo -e " ${YELLOW}0)${NC} Выход"
+    echo -e " ${CYAN}3)${NC} Посмотреть логи сервера"
+    echo -e " ${YELLOW}0)${NC} Выйти"
     echo -e "${MAGENTA}=================================================${NC}"
     read -p "Выберите действие (0-3): " choice
 
