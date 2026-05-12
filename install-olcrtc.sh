@@ -19,8 +19,8 @@ install_olcrtc() {
     echo -e "${GREEN}   Интерактивная установка OlcRTC (Сервер)       ${NC}"
     echo -e "${CYAN}=================================================${NC}"
 
-    # 1. Запрос конфигурации
-    echo -e "Выберите провайдера:"
+    # --- 1. ВЫБОР ПРОВАЙДЕРА ---
+    echo -e "${CYAN}Выберите провайдера:${NC}"
     echo -e " 1) wbstream (по умолчанию)"
     echo -e " 2) telemost"
     echo -e " 3) jazz"
@@ -32,187 +32,95 @@ install_olcrtc() {
         *) PROVIDER="wbstream" ;;
     esac
 
-    read -p "Транспорт (datachannel, vp8channel) [по умолчанию datachannel]: " TRANSPORT
-    TRANSPORT=${TRANSPORT:-datachannel}
+    # --- 2. ВЫБОР ТРАНСПОРТА ---
+    echo -e "\n${CYAN}Выберите тип транспорта:${NC}"
+    echo -e " 1) datachannel (максимальная скорость) [по умолчанию]"
+    echo -e " 2) vp8channel  (высокая скорость)"
+    echo -e " 3) seichannel  (средняя скорость)"
+    echo -e " 4) videochannel (низкая скорость)"
+    read -p "Ваш выбор (1-4) [по умолчанию 1]: " trans_choice
 
-    read -p "ID звонка (обязательно, например id_вашей_комнаты): " ROOM_ID
-    while [ -z "$ROOM_ID" ]; do
-        echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
-        read -p "ID звонка: " ROOM_ID
-    done
+    case $trans_choice in
+        2) TRANSPORT="vp8channel" ;;
+        3) TRANSPORT="seichannel" ;;
+        4) TRANSPORT="videochannel" ;;
+        *) TRANSPORT="datachannel" ;;
+    esac
 
-    read -p "Ключ шифрования (нажмите Enter для автогенерации 32 байт): " ENC_KEY
-    if [ -z "$ENC_KEY" ]; then
+    # --- 3. ВЫБОР ID ЗВОНКА ---
+    echo -e "\n${CYAN}Настройка ID звонка (комнаты):${NC}"
+    if [[ "$PROVIDER" == "wbstream" || "$PROVIDER" == "jazz" ]]; then
+        echo -e " 1) Сгенерировать ID автоматически (рекомендуется)"
+        echo -e " 2) Ввести ID звонка вручную"
+        read -p "Ваш выбор (1-2) [по умолчанию 1]: " room_choice
+        
+        if [[ "$room_choice" == "2" ]]; then
+            AUTO_ROOM=false
+            read -p "Введите ID звонка: " ROOM_ID
+            while [ -z "$ROOM_ID" ]; do
+                echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
+                read -p "Введите ID звонка: " ROOM_ID
+            done
+        else
+            AUTO_ROOM=true
+            echo -e "${YELLOW}ID звонка будет сгенерирован автоматически после компиляции сервера.${NC}"
+        fi
+    else
+        # Для telemost автогенерация не поддерживается
+        echo -e "${YELLOW}Для провайдера telemost доступен только ручной ввод ID звонка.${NC}"
+        AUTO_ROOM=false
+        read -p "Введите ID звонка: " ROOM_ID
+        while [ -z "$ROOM_ID" ]; do
+            echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
+            read -p "Введите ID звонка: " ROOM_ID
+        done
+    fi
+
+    # --- 4. ВЫБОР КЛЮЧА ШИФРОВАНИЯ ---
+    echo -e "\n${CYAN}Настройка ключа шифрования:${NC}"
+    echo -e " 1) Сгенерировать надежный ключ автоматически (рекомендуется)"
+    echo -e " 2) Ввести свой ключ вручную"
+    read -p "Ваш выбор (1-2) [по умолчанию 1]: " key_choice
+    
+    if [[ "$key_choice" == "2" ]]; then
+        read -p "Введите ключ шифрования: " ENC_KEY
+        while [ -z "$ENC_KEY" ]; do
+             echo -e "${RED}Ошибка: Ключ не может быть пустым!${NC}"
+             read -p "Введите ключ шифрования: " ENC_KEY
+        done
+    else
         ENC_KEY=$(openssl rand -hex 32)
         echo -e "${YELLOW}Сгенерирован ключ: $ENC_KEY${NC}"
     fi
 
-    read -p "ID Клиента (нажмите Enter для автогенерации): " CLIENT_ID
-    if [ -z "$CLIENT_ID" ]; then
+    # --- 5. ВЫБОР ID КЛИЕНТА ---
+    echo -e "\n${CYAN}Настройка ID клиента:${NC}"
+    echo -e " 1) Сгенерировать автоматически (рекомендуется)"
+    echo -e " 2) Ввести вручную"
+    read -p "Ваш выбор (1-2) [по умолчанию 1]: " client_choice
+    
+    if [[ "$client_choice" == "2" ]]; then
+        read -p "Введите ID клиента: " CLIENT_ID
+        while [ -z "$CLIENT_ID" ]; do
+             echo -e "${RED}Ошибка: ID клиента не может быть пустым!${NC}"
+             read -p "Введите ID клиента: " CLIENT_ID
+        done
+    else
         CLIENT_ID=$(openssl rand -hex 4)
         echo -e "${YELLOW}Сгенерирован ID клиента: $CLIENT_ID${NC}"
     fi
 
+    echo -e "${CYAN}=================================================${NC}"
+    echo -e "${YELLOW}Начинаем установку. Пожалуйста, подождите...${NC}"
+    
     # Останавливаем при ошибках
     set -e
 
-    # 2. Настройка Swap
-    echo -e "\n${CYAN}[1/5] Настройка Swap (файла подкачки)...${NC}"
+    # Настройка Swap
+    echo -e "\n${CYAN}[1/6] Настройка Swap (файла подкачки)...${NC}"
     if [ ! -f /swapfile ]; then
         fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
         chmod 600 /swapfile
         mkswap /swapfile
         swapon /swapfile
-        echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        echo -e "${GREEN}Swap файл успешно создан.${NC}"
-    else
-        echo -e "${YELLOW}Swap файл уже существует, пропускаем.${NC}"
-    fi
-
-    # 3. Зависимости и Go
-    echo -e "\n${CYAN}[2/5] Установка зависимостей и Go 1.26.2...${NC}"
-    apt-get update && apt-get install -y git wget curl build-essential
-    wget -qO go.tar.gz https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf go.tar.gz
-    rm go.tar.gz
-    export PATH=$PATH:/usr/local/go/bin
-    echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
-
-    # 4. Сборка
-    echo -e "\n${CYAN}[3/5] Установка Mage и сборка OlcRTC...${NC}"
-    cd ~
-    rm -rf mage
-    git clone https://github.com/magefile/mage
-    cd mage
-    /usr/local/go/bin/go run bootstrap.go
-    
-    cd ~
-    rm -rf olcrtc
-    git clone https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
-    cd olcrtc
-    ~/go/bin/mage build
-
-    # 5. Настройка Systemd
-    echo -e "\n${CYAN}[4/5] Настройка системной службы...${NC}"
-    mkdir -p /opt/olcrtc
-    cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
-
-    cat <<EOF > /etc/systemd/system/olcrtc.service
-[Unit]
-Description=OlcRTC Proxy Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -room "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable olcrtc
-    systemctl restart olcrtc
-
-    set +e # Отключаем прерывание при ошибках
-
-    echo -e "\n${GREEN}=================================================${NC}"
-    echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
-    echo -e "${GREEN}=================================================${NC}"
-    echo -e "Ваши данные для подключения в клиенте (Olcbox):"
-    echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
-    echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
-    echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
-    echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
-    echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "URI для быстрого импорта:"
-    echo -e "${YELLOW}olcrtc://$PROVIDER:$TRANSPORT@?room=$ROOM_ID&key=$ENC_KEY&client-id=$CLIENT_ID${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    
-    read -p "Нажмите Enter, чтобы вернуться в меню..."
-}
-
-# Функция удаления
-uninstall_olcrtc() {
-    echo -e "\n${RED}ВНИМАНИЕ: Это действие удалит службу OlcRTC, все ее файлы и настройки.${NC}"
-    read -p "Вы уверены, что хотите продолжить? (y/n): " confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" && "$confirm" != "д" && "$confirm" != "Д" ]]; then
-        echo -e "${YELLOW}Удаление отменено.${NC}"
-        sleep 1
-        return
-    fi
-
-    echo -e "${CYAN}Остановка и удаление службы...${NC}"
-    systemctl stop olcrtc 2>/dev/null || true
-    systemctl disable olcrtc 2>/dev/null || true
-    rm -f /etc/systemd/system/olcrtc.service
-    systemctl daemon-reload
-
-    echo -e "${CYAN}Удаление рабочих директорий и исходников...${NC}"
-    rm -rf /opt/olcrtc
-    rm -rf ~/olcrtc
-    rm -rf ~/mage
-
-    read -p "Удалить установленный язык программирования Go? (y/n): " remove_go
-    if [[ "$remove_go" == "y" || "$remove_go" == "Y" ]]; then
-        rm -rf /usr/local/go
-        rm -f /etc/profile.d/go.sh
-        echo -e "${GREEN}Go успешно удален.${NC}"
-    fi
-
-    read -p "Удалить файл подкачки (/swapfile)? (Если на сервере мало ОЗУ, лучше оставить) (y/n): " remove_swap
-    if [[ "$remove_swap" == "y" || "$remove_swap" == "Y" ]]; then
-        swapoff /swapfile 2>/dev/null || true
-        rm -f /swapfile
-        sed -i '/\/swapfile/d' /etc/fstab
-        echo -e "${GREEN}Файл подкачки удален.${NC}"
-    fi
-
-    echo -e "${GREEN}=================================================${NC}"
-    echo -e "${GREEN} OlcRTC и связанные компоненты успешно удалены!  ${NC}"
-    echo -e "${GREEN} Система возвращена к исходному состоянию.       ${NC}"
-    echo -e "${GREEN}=================================================${NC}"
-    
-    read -p "Нажмите Enter, чтобы вернуться в меню..."
-}
-
-# Главное меню
-while true; do
-    clear
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "${YELLOW}         Установщик OlcRTC Proxy Server          ${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e " 1) Установить OlcRTC (полная автоматическая настройка)"
-    echo -e " 2) Удалить OlcRTC (возврат к начальным установкам)"
-    echo -e " 3) Проверить статус работы (логи сервера)"
-    echo -e " 0) Выход"
-    echo -e "${CYAN}=================================================${NC}"
-    read -p "Выберите действие (0-3): " choice
-
-    case $choice in
-        1)
-            install_olcrtc
-            ;;
-        2)
-            uninstall_olcrtc
-            ;;
-        3)
-            echo -e "${CYAN}Последние логи службы OlcRTC (Ctrl+C для выхода):${NC}"
-            journalctl -u olcrtc -f -n 20
-            ;;
-        0)
-            echo -e "${GREEN}Выход из скрипта. Удачи!${NC}"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Неверный ввод. Пожалуйста, выберите от 0 до 3.${NC}"
-            sleep 1
-            ;;
-    esac
-done
+        echo '/swapfile none swap sw 0 0' >> /etc/f
