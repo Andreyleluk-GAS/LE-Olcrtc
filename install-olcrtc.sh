@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.1"
+SCRIPT_VERSION="v2.0.2"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -209,9 +209,9 @@ install_olcrtc() {
 
         # --- 1. ВЫБОР ПРОВАЙДЕРА ---
         echo -e "${CYAN}Шаг 1: Выберите провайдера:${NC}"
-        echo -e " 1) wbstream (Wildberries - рекомендуется)"
-        echo -e " 2) telemost (Yandex)"
-        echo -e " 3) jazz     (Sber SaluteJazz)"
+        echo -e " 1) ${MAGENTA}wbstream (Wildberries)${NC} - рекомендуется"
+        echo -e " 2) ${YELLOW}telemost (Yandex)${NC}"
+        echo -e " 3) ${CYAN}jazz     (Sber SaluteJazz)${NC}"
         echo -e " 0) Назад в главное меню"
         read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
 
@@ -990,8 +990,8 @@ while true; do
     echo -e " ${CYAN}3)${NC} Посмотреть логи сервера"
     echo -e "${MAGENTA}─────────────────────────────────────────────────${NC}"
     echo -e " ${YELLOW}★ БЫСТРЫЙ СТАРТ — без вопросов, всё само:${NC}"
-    echo -e " ${GREEN}4)${NC} Создать всё на ${CYAN}Wildberries Stream${NC} и дать ссылку"
-    echo -e " ${GREEN}5)${NC} Создать всё на ${MAGENTA}SaluteJazz${NC} и дать ссылку"
+    echo -e " ${GREEN}4)${NC} Создать всё на ${MAGENTA}Wildberries Stream${NC} и дать ссылку"
+    echo -e " ${GREEN}5)${NC} Создать всё на ${CYAN}SaluteJazz${NC} и дать ссылку"
     echo -e "${MAGENTA}─────────────────────────────────────────────────${NC}"
     echo -e " ${CYAN}6)${NC} Проверить статус и реквизиты подключения"
     echo -e "${MAGENTA}─────────────────────────────────────────────────${NC}"
