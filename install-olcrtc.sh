@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.4"
+SCRIPT_VERSION="v2.0.5"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -132,8 +132,9 @@ show_status() {
     echo -e "Ключ:\t\t${YELLOW}${S_ENC_KEY}${NC}"
     echo -e "ID клиента:\t${YELLOW}${S_CLIENT_ID}${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
+    local APP_DISPLAY_NAME="OlcRTC_${S_PROVIDER}_${S_CLIENT_ID:0:4}"
     echo -e "URI для быстрого импорта в Olcbox:"
-    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$OlcRTC_Server${NC}"
+    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$${APP_DISPLAY_NAME}${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
     # Если Jazz — показываем ссылку на встречу
@@ -649,9 +650,10 @@ ENV_EOF
         echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
         echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
         echo -e "Имя бота:\t${YELLOW}$RND_NAME${NC}"
+        APP_DISPLAY_NAME="OlcRTC_${PROVIDER}_${CLIENT_ID:0:4}"
         echo -e "${MAGENTA}=================================================${NC}"
         echo -e "URI для быстрого импорта в Olcbox:"
-        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
+        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$${APP_DISPLAY_NAME}${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
     else
         echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
@@ -971,9 +973,10 @@ ENV_EOF
     echo -e "  Ключ:       ${YELLOW}${QENC_KEY}${NC}"
     echo -e "  ID клиента: ${YELLOW}${QCLIENT_ID}${NC}"
     echo -e "  Имя бота:   ${YELLOW}${QRND_NAME}${NC}"
+    local QAPP_DISPLAY_NAME="OlcRTC_${QP}_${QCLIENT_ID:0:4}"
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e "URI для быстрого импорта в Olcbox:"
-    echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$OlcRTC_Server${NC}"
+    echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$${QAPP_DISPLAY_NAME}${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
     read -p "Нажмите Enter для возврата в меню..."
