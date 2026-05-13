@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.3"
+SCRIPT_VERSION="v2.0.4"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -189,8 +189,8 @@ install_olcrtc() {
         echo
         # Сбрасываем буфер stdin (может содержать Enter от главного меню)
         read -t 0.1 -n 10000 discard_buffer 2>/dev/null || true
-        read -p "Удалить существующую установку и начать заново? (y/д/Enter-отмена): " wipe_choice
-        if [[ "$wipe_choice" == "y" || "$wipe_choice" == "Y" || "$wipe_choice" == "д" || "$wipe_choice" == "Д" ]]; then
+        read -p "Удалить существующую установку и начать заново? (y/n): " wipe_choice
+        if [[ "$wipe_choice" == "y" || "$wipe_choice" == "Y" || "$wipe_choice" == "н" || "$wipe_choice" == "Н" || "$wipe_choice" == "д" || "$wipe_choice" == "Д" ]]; then
             echo -e "${CYAN}Выполняю очистку...${NC}"
             silent_wipe
             echo -e "${GREEN}Очистка завершена. Начинаем чистую установку.${NC}"
@@ -713,8 +713,8 @@ uninstall_olcrtc() {
     echo -e "${RED}ВНИМАНИЕ: Это действие удалит службу OlcRTC, все её файлы и настройки.${NC}"
     # Сбрасываем буфер stdin (может содержать Enter от главного меню)
     read -t 0.1 -n 10000 discard_buffer 2>/dev/null || true
-    read -p "Вы уверены, что хотите продолжить? (y/д/Enter-отмена): " confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" && "$confirm" != "д" && "$confirm" != "Д" ]]; then
+    read -p "Вы уверены, что хотите продолжить? (y/n): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" && "$confirm" != "н" && "$confirm" != "Н" && "$confirm" != "д" && "$confirm" != "Д" ]]; then
         echo -e "${YELLOW}Удаление отменено.${NC}"
         sleep 1
         return
@@ -731,15 +731,15 @@ uninstall_olcrtc() {
     rm -rf ~/olcrtc
     rm -rf ~/mage
 
-    read -p "Удалить установленный Go? (y/д/Enter-нет): " remove_go
-    if [[ "$remove_go" == "y" || "$remove_go" == "Y" || "$remove_go" == "д" || "$remove_go" == "Д" ]]; then
+    read -p "Удалить установленный Go? (y/n): " remove_go
+    if [[ "$remove_go" == "y" || "$remove_go" == "Y" || "$remove_go" == "н" || "$remove_go" == "Н" || "$remove_go" == "д" || "$remove_go" == "Д" ]]; then
         rm -rf /usr/local/go
         rm -f /etc/profile.d/go.sh
         echo -e "${GREEN}Go успешно удалён.${NC}"
     fi
 
-    read -p "Удалить файл подкачки (/swapfile)? (y/д/Enter-нет): " remove_swap
-    if [[ "$remove_swap" == "y" || "$remove_swap" == "Y" || "$remove_swap" == "д" || "$remove_swap" == "Д" ]]; then
+    read -p "Удалить файл подкачки (/swapfile)? (y/n): " remove_swap
+    if [[ "$remove_swap" == "y" || "$remove_swap" == "Y" || "$remove_swap" == "н" || "$remove_swap" == "Н" || "$remove_swap" == "д" || "$remove_swap" == "Д" ]]; then
         swapoff /swapfile 2>/dev/null || true
         rm -f /swapfile
         sed -i '/\/swapfile/d' /etc/fstab
