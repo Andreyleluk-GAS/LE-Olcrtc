@@ -347,6 +347,34 @@ install_olcrtc() {
         echo -e "\n${CYAN}[6/7] Автоматическая генерация ID звонка...${NC}"
         ROOM_ID=$(./build/olcrtc-linux-amd64 -mode gen -carrier $PROVIDER -dns 1.1.1.1:53 -amount 1 -data data)
         echo -e "${GREEN}Сгенерирован Room ID: $ROOM_ID${NC}"
+
+        # Вывод реквизитов созданной комнаты для приглашения участников
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            # Для Jazz пароль возвращается вместе с Room ID через пробел или в отдельном поле
+            # Формат вывода olcrtc -mode gen -carrier jazz: "roomId password"
+            JAZZ_ROOM_PARTS=($ROOM_ID)
+            JAZZ_ID="${JAZZ_ROOM_PARTS[0]}"
+            JAZZ_PSW="${JAZZ_ROOM_PARTS[1]:-}"
+            ROOM_ID="$JAZZ_ID"
+
+            echo -e "\n${MAGENTA}--- Реквизиты встречи SaluteJazz ---${NC}"
+            echo -e "Подключиться в браузере по ссылке:"
+            if [[ -n "$JAZZ_PSW" ]]; then
+                echo -e "  ${YELLOW}https://salutejazz.ru/calls/${JAZZ_ID}?psw=${JAZZ_PSW}${NC}"
+            else
+                echo -e "  ${YELLOW}https://salutejazz.ru/calls/${JAZZ_ID}${NC}"
+            fi
+            echo -e "Для подключения по коду видеовстречи:"
+            echo -e "  Код конференции: ${YELLOW}${JAZZ_ID}@salutejazz.ru${NC}"
+            if [[ -n "$JAZZ_PSW" ]]; then
+                echo -e "  Пароль:          ${YELLOW}${JAZZ_PSW}${NC}"
+            fi
+            echo -e "${MAGENTA}------------------------------------${NC}"
+        elif [[ "$PROVIDER" == "wbstream" ]]; then
+            echo -e "\n${MAGENTA}--- Реквизиты комнаты WB Stream ---${NC}"
+            echo -e "  Ссылка: ${YELLOW}https://stream.wb.ru/room/${ROOM_ID}${NC}"
+            echo -e "${MAGENTA}-----------------------------------${NC}"
+        fi
     else
         echo -e "\n${CYAN}[6/7] Генерация ID пропущена (используется ручной ввод).${NC}"
     fi
@@ -519,18 +547,222 @@ uninstall_olcrtc() {
     read -p "Нажмите Enter для возврата в меню..."
 }
 
+# ─────────────────────────────────────────────────────────────
+# Быстрая установка (без вопросов)
+# ─────────────────────────────────────────────────────────────
+quick_install() {
+    local QP="$1"   # wbstream | jazz
+
+    print_logo
+    echo -e "${MAGENTA}=================================================${NC}"
+    if [[ "$QP" == "wbstream" ]]; then
+        echo -e "${GREEN}   Быстрый старт — Wildberries Stream (WB)       ${NC}"
+    else
+        echo -e "${GREEN}   Быстрый старт — SaluteJazz                    ${NC}"
+    fi
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${YELLOW}Всё будет настроено автоматически, просто подождите.${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo
+
+    # Лучшие параметры для каждого провайдера
+    if [[ "$QP" == "wbstream" ]]; then
+        QT="datachannel"
+        QTFLAGS=""
+    else
+        QT="vp8channel"
+        QTFLAGS="-vp8-fps 60 -vp8-batch 64"
+    fi
+
+    # Вывод завершённого шага
+    qstep() { echo -e "  ${GREEN}✔${NC} $1"; }
+
+    # Спиннер поверх одной строки пока жив QPID
+    qwait() {
+        local label="$1"
+        local spin='-\|/'
+        local i=0
+        while kill -0 "$QPID" 2>/dev/null; do
+            i=$(( (i+1) % 4 ))
+            printf "\r  ${CYAN}…${NC} ${label} ${spin:$i:1}   "
+            sleep 0.12
+        done
+        wait "$QPID"
+        QSTATUS=$?
+        printf "\r\033[2K"   # стереть строку спиннера
+    }
+
+    set -e
+
+    # [1] Обновление системы
+    ( apt-get update -q && apt-get upgrade -yq ) >/dev/null 2>&1 &
+    QPID=$!; qwait "Обновление системы"
+    [ $QSTATUS -ne 0 ] && { echo -e "${RED}  ✖ Ошибка обновления${NC}"; exit 1; }
+    qstep "Система обновлена"
+
+    # [2] Swap
+    (
+        if [ ! -f /swapfile ]; then
+            fallocate -l 2G /swapfile 2>/dev/null \
+                || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null
+            swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+    ) &
+    QPID=$!; qwait "Настройка swap"
+    qstep "Swap готов"
+
+    # [3] Go + зависимости
+    (
+        apt-get install -yq git wget curl build-essential >/dev/null 2>&1
+        wget -qO /tmp/go_quick.tar.gz https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go_quick.tar.gz
+        rm /tmp/go_quick.tar.gz
+        echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
+    ) &
+    QPID=$!; qwait "Установка Go и зависимостей"
+    [ $QSTATUS -ne 0 ] && { echo -e "${RED}  ✖ Ошибка установки Go${NC}"; exit 1; }
+    export PATH=$PATH:/usr/local/go/bin
+    qstep "Go установлен"
+
+    # [4] Mage
+    (
+        mkdir -p ~/go/bin
+        cd ~; rm -rf mage
+        git clone -q https://github.com/magefile/mage
+        cd mage
+        /usr/local/go/bin/go run bootstrap.go >/dev/null 2>&1
+    ) &
+    QPID=$!; qwait "Установка сборщика Mage"
+    export GOPATH=~/go
+    export PATH=$PATH:$GOPATH/bin
+    qstep "Mage установлен"
+
+    # [5] Сборка OlcRTC
+    (
+        apt-get clean -q 2>/dev/null || true
+        apt-get autoremove -yq 2>/dev/null || true
+        /usr/local/go/bin/go clean -cache 2>/dev/null || true
+        journalctl --vacuum-size=50M 2>/dev/null || true
+        rm -rf ~/mage ~/go/tmp ~/go/cache ~/olcrtc_build.log 2>/dev/null || true
+        cd ~; rm -rf olcrtc
+        git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
+        cd olcrtc
+        mkdir -p ~/go/tmp ~/go/cache
+        GOTMPDIR=~/go/tmp GOCACHE=~/go/cache GOFLAGS="-p=2" ~/go/bin/mage build >~/olcrtc_build.log 2>&1
+    ) &
+    QPID=$!; qwait "Сборка OlcRTC (2–5 мин)"
+    if [ $QSTATUS -ne 0 ]; then
+        echo -e "${RED}  ✖ Ошибка сборки! Лог: ~/olcrtc_build.log${NC}"
+        tail -10 ~/olcrtc_build.log 2>/dev/null
+        exit 1
+    fi
+    rm -rf ~/go/tmp ~/go/cache
+    qstep "OlcRTC собран"
+
+    # [6] Генерация Room ID и ключей
+    QROOM_ID_RAW=$(cd ~/olcrtc && ./build/olcrtc-linux-amd64 \
+        -mode gen -carrier "$QP" -dns 1.1.1.1:53 -amount 1 -data data 2>/dev/null)
+    QROOM_PARTS=($QROOM_ID_RAW)
+    QROOM_ID="${QROOM_PARTS[0]}"
+    QROOM_PSW="${QROOM_PARTS[1]:-}"
+    qstep "Room ID: ${YELLOW}${QROOM_ID}${NC}"
+
+    QENC_KEY=$(openssl rand -hex 32)
+    QCLIENT_ID=$(openssl rand -hex 4)
+    qstep "Ключ шифрования создан"
+
+    # [7] Systemd-сервис
+    systemctl stop olcrtc 2>/dev/null || true
+    mkdir -p /opt/olcrtc/data
+    cp ~/olcrtc/build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
+
+    cat <<SVC_EOF > /etc/systemd/system/olcrtc.service
+[Unit]
+Description=OlcRTC Proxy Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/olcrtc
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}" ${QTFLAGS}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+    systemctl daemon-reload
+    systemctl enable olcrtc >/dev/null 2>&1
+    systemctl restart olcrtc
+    if [[ "$QP" == "jazz" ]]; then sleep 8; else sleep 4; fi
+
+    if systemctl is-active --quiet olcrtc; then
+        qstep "Служба запущена и работает"
+    else
+        echo -e "${RED}  ✖ Служба запустилась, но упала!${NC}"
+        echo -e "${YELLOW}  Лог: journalctl -u olcrtc -n 30${NC}"
+    fi
+
+    set +e
+
+    # ── Итоговый экран ────────────────────────────────
+    echo
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN}            ГОТОВО! ПОДКЛЮЧАЙТЕСЬ:              ${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    if [[ "$QP" == "jazz" ]]; then
+        echo -e "Подключиться в браузере по ссылке:"
+        if [[ -n "$QROOM_PSW" ]]; then
+            echo -e "  ${YELLOW}https://salutejazz.ru/calls/${QROOM_ID}?psw=${QROOM_PSW}${NC}"
+        else
+            echo -e "  ${YELLOW}https://salutejazz.ru/calls/${QROOM_ID}${NC}"
+        fi
+        echo -e "Для подключения по коду видеовстречи:"
+        echo -e "  Код конференции: ${YELLOW}${QROOM_ID}@salutejazz.ru${NC}"
+        [[ -n "$QROOM_PSW" ]] && echo -e "  Пароль:          ${YELLOW}${QROOM_PSW}${NC}"
+    else
+        echo -e "  Ссылка WB Stream: ${YELLOW}https://stream.wb.ru/room/${QROOM_ID}${NC}"
+    fi
+
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "Данные для клиента Olcbox:"
+    echo -e "  Провайдер:  ${YELLOW}${QP}${NC}"
+    echo -e "  Транспорт:  ${YELLOW}${QT}${NC}"
+    echo -e "  ID звонка:  ${YELLOW}${QROOM_ID}${NC}"
+    echo -e "  Ключ:       ${YELLOW}${QENC_KEY}${NC}"
+    echo -e "  ID клиента: ${YELLOW}${QCLIENT_ID}${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "URI для быстрого импорта в Olcbox:"
+    echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$OlcRTC_Server${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    read -p "Нажмите Enter для возврата в меню..."
+}
+
 # Главное меню
 while true; do
     print_logo
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e "${YELLOW}         Установщик OlcRTC Proxy Server          ${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
-    echo -e " ${GREEN}1)${NC} Установить OlcRTC (полная автоматическая настройка)"
+    echo -e " ${GREEN}1)${NC} Установить OlcRTC (полная настройка с выбором параметров)"
     echo -e " ${RED}2)${NC} Удалить OlcRTC (возврат к начальным установкам)"
     echo -e " ${CYAN}3)${NC} Посмотреть логи сервера"
+    echo -e "${MAGENTA}─────────────────────────────────────────────────${NC}"
+    echo -e " ${YELLOW}★ БЫСТРЫЙ СТАРТ — без вопросов, всё само:${NC}"
+    echo -e " ${GREEN}4)${NC} Создать всё на ${CYAN}Wildberries Stream${NC} и дать ссылку"
+    echo -e " ${GREEN}5)${NC} Создать всё на ${MAGENTA}SaluteJazz${NC} и дать ссылку"
+    echo -e "${MAGENTA}─────────────────────────────────────────────────${NC}"
     echo -e " ${YELLOW}0)${NC} Выйти"
     echo -e "${MAGENTA}=================================================${NC}"
-    read -p "Выберите действие (0-3): " choice
+    read -p "Выберите действие (0-5): " choice
 
     case $choice in
         1) install_olcrtc ;;
@@ -539,12 +771,14 @@ while true; do
             echo -e "${CYAN}Последние логи службы OlcRTC (Ctrl+C для выхода):${NC}"
             journalctl -u olcrtc -f -n 20
             ;;
+        4) quick_install wbstream ;;
+        5) quick_install jazz ;;
         0)
             echo -e "${GREEN}Выход. Удачи!${NC}"
             exit 0
             ;;
         *)
-            echo -e "${RED}Неверный ввод. Пожалуйста, выберите от 0 до 3.${NC}"
+            echo -e "${RED}Неверный ввод. Пожалуйста, выберите от 0 до 5.${NC}"
             sleep 1
             ;;
     esac
