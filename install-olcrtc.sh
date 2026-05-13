@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.2"
+SCRIPT_VERSION="v2.0.3"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -280,10 +280,10 @@ install_olcrtc() {
         echo -e "ID звонка — это идентификатор конференции, внутри которой прячется трафик."
         echo -e "Используйте реальную комнату для лучшей маскировки.\n"
 
-        echo -e "Создайте комнату и скопируйте ID (код в конце ссылки):"
-        echo -e " ▶ ${CYAN}WB Stream:${NC}       https://stream.wb.ru/room/${YELLOW}[ваш_id]${NC}"
-        echo -e " ▶ ${CYAN}Yandex Telemost:${NC} https://telemost.yandex.ru/j/${YELLOW}[ваш_id]${NC}"
-        echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/${YELLOW}[ваш_id]${NC}\n"
+        echo -e "Создайте комнату и скопируйте ID (код в конце ссылки) или вставьте ссылку целиком:"
+        echo -e " ▶ ${MAGENTA}WB Stream:${NC}       https://stream.wb.ru/room/ ${YELLOW}[ваш_id]${NC}"
+        echo -e " ▶ ${YELLOW}Yandex Telemost:${NC} https://telemost.yandex.ru/j/ ${YELLOW}[ваш_id]${NC}"
+        echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/ ${YELLOW}[ваш_id]${NC}\n"
 
         echo -e "${MAGENTA}-------------------------------------------------${NC}"
         echo -e "${GREEN}✔ Для WB Stream и SaluteJazz доступна автогенерация ID.${NC}"
