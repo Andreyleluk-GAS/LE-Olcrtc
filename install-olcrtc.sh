@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.7"
+SCRIPT_VERSION="v2.0.8"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -380,10 +380,9 @@ install_olcrtc() {
     fi
 
     # [3/7] Зависимости и Go
-    echo -e "\n${CYAN}[3/7] Установка последней версии Go...${NC}"
+    echo -e "\n${CYAN}[3/7] Установка Go 1.21.10 (стабильная версия)...${NC}"
     apt-get install -yq git wget curl build-essential
-    LATEST_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
-    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/${LATEST_GO_VERSION}.linux-amd64.tar.gz"
+    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/go1.21.10.linux-amd64.tar.gz"
     rm -rf /usr/local/go
     tar -C /usr/local -xzf /tmp/go_download.tar.gz
     rm -f /tmp/go_download.tar.gz
@@ -533,22 +532,6 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # Дополнительные флаги транспорта (из документации, рекомендуемые значения)
-    case $TRANSPORT in
-        vp8channel)
-            TRANSPORT_FLAGS="-vp8-fps 60 -vp8-batch 64"
-            ;;
-        seichannel)
-            TRANSPORT_FLAGS="-fps 60 -batch 64 -frag 900 -ack-ms 2000"
-            ;;
-        videochannel)
-            TRANSPORT_FLAGS="-video-codec qrcode -video-w 1080 -video-h 1080 -video-fps 60 -video-bitrate 5000k -video-hw none"
-            ;;
-        *)
-            TRANSPORT_FLAGS=""  # datachannel — дополнительных флагов нет
-            ;;
-    esac
-
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -558,7 +541,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID" $TRANSPORT_FLAGS
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
 Restart=always
 RestartSec=5
 
@@ -743,10 +726,8 @@ quick_install() {
     # Лучшие параметры для каждого провайдера
     if [[ "$QP" == "wbstream" ]]; then
         QT="datachannel"
-        QTFLAGS=""
     else
         QT="vp8channel"
-        QTFLAGS="-vp8-fps 60 -vp8-batch 64"
     fi
 
     # Автоматическая тихая очистка предыдущей установки (без вопросов)
@@ -792,17 +773,16 @@ quick_install() {
     QPID=$!; qwait "Настройка swap"
     qstep "Swap готов"
 
-    # [3] Go + зависимости
+    # [3] Go 1.21.10 + зависимости
     (
         apt-get install -yq git wget curl build-essential >/dev/null 2>&1
-        QUICK_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
-        wget -qO /tmp/go_quick.tar.gz "https://go.dev/dl/${QUICK_GO_VERSION}.linux-amd64.tar.gz"
+        wget -qO /tmp/go_quick.tar.gz "https://go.dev/dl/go1.21.10.linux-amd64.tar.gz"
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go_quick.tar.gz
         rm -f /tmp/go_quick.tar.gz
         echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
     ) &
-    QPID=$!; qwait "Установка последней версии Go"
+    QPID=$!; qwait "Установка Go 1.21.10"
     [ $QSTATUS -ne 0 ] && { echo -e "${RED}  ✖ Ошибка установки Go${NC}"; exit 1; }
     export PATH=$PATH:/usr/local/go/bin
     qstep "Go установлен"
@@ -872,7 +852,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}" ${QTFLAGS}
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}"
 Restart=always
 RestartSec=5
 
