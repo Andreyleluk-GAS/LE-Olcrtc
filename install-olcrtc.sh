@@ -270,10 +270,12 @@ install_olcrtc() {
 
             if [[ "$room_choice" == "2" ]]; then
                 AUTO_ROOM=false
-                read -p "Введите ID звонка: " ROOM_ID
+                read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
+                ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
                 while [ -z "$ROOM_ID" ]; do
                     echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
-                    read -p "Введите ID звонка: " ROOM_ID
+                    read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
+                    ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
                 done
             else
                 AUTO_ROOM=true
@@ -288,10 +290,12 @@ install_olcrtc() {
             [[ "$room_choice" == "0" ]] && return
 
             AUTO_ROOM=false
-            read -p "Введите ID звонка: " ROOM_ID
+            read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
+            ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
             while [ -z "$ROOM_ID" ]; do
                 echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
-                read -p "Введите ID звонка: " ROOM_ID
+                read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
+                ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
             done
         fi
 
