@@ -35,6 +35,32 @@ calc_build_flags() {
 }
 
 # ─────────────────────────────────────────────────────────────
+# Генерация реалистичного русского имени для маскировки в SFU
+# ─────────────────────────────────────────────────────────────
+generate_russian_name() {
+    local NAMES=(
+        "Иван Петров"
+        "Сергей Сидоров"
+        "Дмитрий Кузнецов"
+        "Александр Попов"
+        "Алексей Смирнов"
+        "Мария Иванова"
+        "Анна Козлова"
+        "Елена Волкова"
+        "Олег Орлов"
+        "Наталья Морозова"
+        "Михаил Федоров"
+        "Владимир Краснов"
+        "Андрей Соколов"
+        "Екатерина Лебедева"
+        "Татьяна Новикова"
+    )
+    local COUNT=${#NAMES[@]}
+    local INDEX=$((RANDOM % COUNT))
+    RND_NAME="${NAMES[$INDEX]}"
+}
+
+# ─────────────────────────────────────────────────────────────
 # Тихая очистка предыдущей установки (без интерактивных вопросов)
 # Используется как в install_olcrtc (после подтверждения),
 # так и в quick_install (автоматически).
@@ -376,12 +402,13 @@ install_olcrtc() {
     fi
 
     # [3/7] Зависимости и Go
-    echo -e "\n${CYAN}[3/7] Установка Go 1.26.3 и зависимостей...${NC}"
+    echo -e "\n${CYAN}[3/7] Установка последней версии Go...${NC}"
     apt-get install -yq git wget curl build-essential
-    wget -qO go.tar.gz https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
+    LATEST_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
+    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/${LATEST_GO_VERSION}.linux-amd64.tar.gz"
     rm -rf /usr/local/go
-    tar -C /usr/local -xzf go.tar.gz
-    rm go.tar.gz
+    tar -C /usr/local -xzf /tmp/go_download.tar.gz
+    rm -f /tmp/go_download.tar.gz
     export PATH=$PATH:/usr/local/go/bin
     echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
 
@@ -528,6 +555,10 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
+    # Генерируем реалистичное русское имя для маскировки в SFU
+    generate_russian_name
+    echo -e "${YELLOW}Имя бота: $RND_NAME${NC}"
+
     # Дополнительные флаги транспорта (из документации, рекомендуемые значения)
     case $TRANSPORT in
         vp8channel)
@@ -553,7 +584,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID" $TRANSPORT_FLAGS
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID" -user "$RND_NAME" $TRANSPORT_FLAGS
 Restart=always
 RestartSec=5
 
@@ -584,6 +615,7 @@ S_TRANSPORT="${TRANSPORT}"
 S_ROOM_ID="${ROOM_ID}"
 S_ENC_KEY="${ENC_KEY}"
 S_CLIENT_ID="${CLIENT_ID}"
+S_USER_NAME="${RND_NAME}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
 
@@ -591,12 +623,28 @@ ENV_EOF
         echo -e "\n${MAGENTA}=================================================${NC}"
         echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
+
+        # Ссылки на конференцию для участников
+        if [[ "$PROVIDER" == "telemost" ]]; then
+            echo -e "Ссылка для участников (Yandex Telemost):"
+            echo -e "  ${YELLOW}https://telemost.yandex.ru/j/${ROOM_ID}${NC}"
+        elif [[ "$PROVIDER" == "wbstream" ]]; then
+            echo -e "Ссылка для участников (WB Stream):"
+            echo -e "  ${YELLOW}https://stream.wb.ru/room/${ROOM_ID}${NC}"
+        elif [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "Ссылка для участников (SaluteJazz):"
+            echo -e "  ${YELLOW}https://salutejazz.ru/calls/${ROOM_ID}${NC}"
+            echo -e "  Код конференции: ${YELLOW}${ROOM_ID}@salutejazz.ru${NC}"
+        fi
+        echo -e "${MAGENTA}=================================================${NC}"
+
         echo -e "Ваши данные для подключения в клиенте (Olcbox):"
         echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
         echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
         echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
         echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
         echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
+        echo -e "Имя бота:\t${YELLOW}$RND_NAME${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
         echo -e "URI для быстрого импорта в Olcbox:"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
@@ -775,13 +823,14 @@ quick_install() {
     # [3] Go + зависимости
     (
         apt-get install -yq git wget curl build-essential >/dev/null 2>&1
-        wget -qO /tmp/go_quick.tar.gz https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
+        QUICK_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
+        wget -qO /tmp/go_quick.tar.gz "https://go.dev/dl/${QUICK_GO_VERSION}.linux-amd64.tar.gz"
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go_quick.tar.gz
-        rm /tmp/go_quick.tar.gz
+        rm -f /tmp/go_quick.tar.gz
         echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
     ) &
-    QPID=$!; qwait "Установка Go и зависимостей"
+    QPID=$!; qwait "Установка последней версии Go"
     [ $QSTATUS -ne 0 ] && { echo -e "${RED}  ✖ Ошибка установки Go${NC}"; exit 1; }
     export PATH=$PATH:/usr/local/go/bin
     qstep "Go установлен"
@@ -842,6 +891,12 @@ quick_install() {
     mkdir -p /opt/olcrtc/data
     cp ~/olcrtc/build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
+    # Генерируем реалистичное русское имя для маскировки в SFU
+    QRND_NAME=""
+    generate_russian_name
+    QRND_NAME="$RND_NAME"
+    qstep "Имя бота: ${YELLOW}${QRND_NAME}${NC}"
+
     cat <<SVC_EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -851,7 +906,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}" ${QTFLAGS}
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}" -user "${QRND_NAME}" ${QTFLAGS}
 Restart=always
 RestartSec=5
 
@@ -873,6 +928,7 @@ S_TRANSPORT="${QT}"
 S_ROOM_ID="${QROOM_ID}"
 S_ENC_KEY="${QENC_KEY}"
 S_CLIENT_ID="${QCLIENT_ID}"
+S_USER_NAME="${QRND_NAME}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
         qstep "Служба запущена и работает"
@@ -890,20 +946,19 @@ ENV_EOF
     echo -e "${GREEN}            ГОТОВО! ПОДКЛЮЧАЙТЕСЬ:              ${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
-    if [[ "$QP" == "jazz" ]]; then
-        echo -e "Подключиться в браузере по ссылке:"
+    if [[ "$QP" == "wbstream" ]]; then
+        echo -e "Ссылка для участников (WB Stream):"
+        echo -e "  ${YELLOW}https://stream.wb.ru/room/${QROOM_ID}${NC}"
+    elif [[ "$QP" == "jazz" ]]; then
+        echo -e "Ссылка для участников (SaluteJazz):"
         if [[ -n "$QROOM_PSW" ]]; then
             echo -e "  ${YELLOW}https://salutejazz.ru/calls/${QROOM_ID}?psw=${QROOM_PSW}${NC}"
+            echo -e "  Пароль:          ${YELLOW}${QROOM_PSW}${NC}"
         else
             echo -e "  ${YELLOW}https://salutejazz.ru/calls/${QROOM_ID}${NC}"
         fi
-        echo -e "Для подключения по коду видеовстречи:"
         echo -e "  Код конференции: ${YELLOW}${QROOM_ID}@salutejazz.ru${NC}"
-        [[ -n "$QROOM_PSW" ]] && echo -e "  Пароль:          ${YELLOW}${QROOM_PSW}${NC}"
-    else
-        echo -e "  Ссылка WB Stream: ${YELLOW}https://stream.wb.ru/room/${QROOM_ID}${NC}"
     fi
-
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e "Данные для клиента Olcbox:"
     echo -e "  Провайдер:  ${YELLOW}${QP}${NC}"
@@ -911,6 +966,7 @@ ENV_EOF
     echo -e "  ID звонка:  ${YELLOW}${QROOM_ID}${NC}"
     echo -e "  Ключ:       ${YELLOW}${QENC_KEY}${NC}"
     echo -e "  ID клиента: ${YELLOW}${QCLIENT_ID}${NC}"
+    echo -e "  Имя бота:   ${YELLOW}${QRND_NAME}${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e "URI для быстрого импорта в Olcbox:"
     echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$OlcRTC_Server${NC}"
