@@ -8,6 +8,32 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
+# Определяет оптимальный флаг параллелизма для сборки Go
+# на основе свободного места на диске и числа CPU.
+# Возвращает строку вида "-p=N" или пустую строку (все ядра).
+calc_build_flags() {
+    local FREE_KB
+    FREE_KB=$(df / --output=avail 2>/dev/null | tail -1)
+    FREE_KB=${FREE_KB:-0}
+
+    local NCPU
+    NCPU=$(nproc 2>/dev/null || echo 2)
+
+    if [ "$FREE_KB" -ge 3145728 ]; then
+        # >= 3 ГБ свободно — полная скорость, все ядра
+        BUILD_PARALLEL_FLAGS=""
+        BUILD_SPEED_MSG="${GREEN}полная скорость (${NCPU} ядер, >3 ГБ свободно)${NC}"
+    elif [ "$FREE_KB" -ge 1536000 ]; then
+        # >= 1.5 ГБ — умеренный параллелизм
+        BUILD_PARALLEL_FLAGS="-p=4"
+        BUILD_SPEED_MSG="${YELLOW}умеренная скорость (-p=4, 1.5–3 ГБ свободно)${NC}"
+    else
+        # < 1.5 ГБ — безопасный режим
+        BUILD_PARALLEL_FLAGS="-p=2"
+        BUILD_SPEED_MSG="${RED}безопасный режим (-p=2, мало места на диске)${NC}"
+    fi
+}
+
 # Проверка на права root
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}Ошибка: Пожалуйста, запустите скрипт с правами root (sudo ./install-olcrtc.sh)${NC}"
@@ -299,8 +325,11 @@ install_olcrtc() {
     mkdir -p ~/go/tmp ~/go/cache
     export GOTMPDIR=~/go/tmp
     export GOCACHE=~/go/cache
-    # Ограничиваем параллелизм сборки: меньше пиковый расход tmp на диске
-    export GOFLAGS="-p=2"
+
+    # Адаптивный параллелизм: зависит от свободного места и числа ядер
+    calc_build_flags
+    echo -e "${CYAN}Режим сборки: ${BUILD_SPEED_MSG}"
+    [ -n "$BUILD_PARALLEL_FLAGS" ] && export GOFLAGS="$BUILD_PARALLEL_FLAGS"
 
     BUILD_LOG=~/olcrtc_build.log
 
@@ -316,7 +345,7 @@ install_olcrtc() {
     i=0
     while kill -0 $PID 2>/dev/null; do
         i=$(( (i+1) % 4 ))
-        printf "\r${YELLOW}Компиляция в процессе (2-5 минут)... %c${NC}" "${spin:$i:1}"
+        printf "\r${YELLOW}Компиляция в процессе... %c${NC}" "${spin:$i:1}"
         sleep 0.1
     done
 
@@ -642,6 +671,9 @@ quick_install() {
     qstep "Mage установлен"
 
     # [5] Сборка OlcRTC
+    # Считаем флаги до запуска фонового процесса
+    calc_build_flags
+    qstep "Режим сборки: ${BUILD_SPEED_MSG}"
     (
         apt-get clean -q 2>/dev/null || true
         apt-get autoremove -yq 2>/dev/null || true
@@ -652,9 +684,10 @@ quick_install() {
         git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
         cd olcrtc
         mkdir -p ~/go/tmp ~/go/cache
-        GOTMPDIR=~/go/tmp GOCACHE=~/go/cache GOFLAGS="-p=2" ~/go/bin/mage build >~/olcrtc_build.log 2>&1
+        GOTMPDIR=~/go/tmp GOCACHE=~/go/cache GOFLAGS="${BUILD_PARALLEL_FLAGS}" \
+            ~/go/bin/mage build >~/olcrtc_build.log 2>&1
     ) &
-    QPID=$!; qwait "Сборка OlcRTC (2–5 мин)"
+    QPID=$!; qwait "Сборка OlcRTC"
     if [ $QSTATUS -ne 0 ]; then
         echo -e "${RED}  ✖ Ошибка сборки! Лог: ~/olcrtc_build.log${NC}"
         tail -10 ~/olcrtc_build.log 2>/dev/null
