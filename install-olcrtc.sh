@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.5"
+SCRIPT_VERSION="v2.0.7"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -35,32 +35,6 @@ calc_build_flags() {
         BUILD_PARALLEL_FLAGS="-p=2"
         BUILD_SPEED_MSG="${RED}безопасный режим (-p=2, мало места на диске)${NC}"
     fi
-}
-
-# ─────────────────────────────────────────────────────────────
-# Генерация реалистичного русского имени для маскировки в SFU
-# ─────────────────────────────────────────────────────────────
-generate_russian_name() {
-    local NAMES=(
-        "Иван Петров"
-        "Сергей Сидоров"
-        "Дмитрий Кузнецов"
-        "Александр Попов"
-        "Алексей Смирнов"
-        "Мария Иванова"
-        "Анна Козлова"
-        "Елена Волкова"
-        "Олег Орлов"
-        "Наталья Морозова"
-        "Михаил Федоров"
-        "Владимир Краснов"
-        "Андрей Соколов"
-        "Екатерина Лебедева"
-        "Татьяна Новикова"
-    )
-    local COUNT=${#NAMES[@]}
-    local INDEX=$((RANDOM % COUNT))
-    RND_NAME="${NAMES[$INDEX]}"
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -132,9 +106,8 @@ show_status() {
     echo -e "Ключ:\t\t${YELLOW}${S_ENC_KEY}${NC}"
     echo -e "ID клиента:\t${YELLOW}${S_CLIENT_ID}${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
-    local APP_DISPLAY_NAME="OlcRTC_${S_PROVIDER}_${S_CLIENT_ID:0:4}"
     echo -e "URI для быстрого импорта в Olcbox:"
-    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$${APP_DISPLAY_NAME}${NC}"
+    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$OlcRTC_Server${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
     # Если Jazz — показываем ссылку на встречу
@@ -560,10 +533,6 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # Генерируем реалистичное русское имя для маскировки в SFU
-    generate_russian_name
-    echo -e "${YELLOW}Имя бота: $RND_NAME${NC}"
-
     # Дополнительные флаги транспорта (из документации, рекомендуемые значения)
     case $TRANSPORT in
         vp8channel)
@@ -620,7 +589,6 @@ S_TRANSPORT="${TRANSPORT}"
 S_ROOM_ID="${ROOM_ID}"
 S_ENC_KEY="${ENC_KEY}"
 S_CLIENT_ID="${CLIENT_ID}"
-S_USER_NAME="${RND_NAME}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
 
@@ -649,11 +617,9 @@ ENV_EOF
         echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
         echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
         echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
-        echo -e "Имя бота:\t${YELLOW}$RND_NAME${NC}"
-        APP_DISPLAY_NAME="OlcRTC_${PROVIDER}_${CLIENT_ID:0:4}"
         echo -e "${MAGENTA}=================================================${NC}"
         echo -e "URI для быстрого импорта в Olcbox:"
-        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$${APP_DISPLAY_NAME}${NC}"
+        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
     else
         echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
@@ -897,12 +863,6 @@ quick_install() {
     mkdir -p /opt/olcrtc/data
     cp ~/olcrtc/build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
-    # Генерируем реалистичное русское имя для маскировки в SFU
-    QRND_NAME=""
-    generate_russian_name
-    QRND_NAME="$RND_NAME"
-    qstep "Имя бота: ${YELLOW}${QRND_NAME}${NC}"
-
     cat <<SVC_EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -934,7 +894,6 @@ S_TRANSPORT="${QT}"
 S_ROOM_ID="${QROOM_ID}"
 S_ENC_KEY="${QENC_KEY}"
 S_CLIENT_ID="${QCLIENT_ID}"
-S_USER_NAME="${QRND_NAME}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
         qstep "Служба запущена и работает"
@@ -972,11 +931,9 @@ ENV_EOF
     echo -e "  ID звонка:  ${YELLOW}${QROOM_ID}${NC}"
     echo -e "  Ключ:       ${YELLOW}${QENC_KEY}${NC}"
     echo -e "  ID клиента: ${YELLOW}${QCLIENT_ID}${NC}"
-    echo -e "  Имя бота:   ${YELLOW}${QRND_NAME}${NC}"
-    local QAPP_DISPLAY_NAME="OlcRTC_${QP}_${QCLIENT_ID:0:4}"
     echo -e "${MAGENTA}=================================================${NC}"
     echo -e "URI для быстрого импорта в Olcbox:"
-    echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$${QAPP_DISPLAY_NAME}${NC}"
+    echo -e "${YELLOW}olcrtc://${QP}?${QT}@${QROOM_ID}#${QENC_KEY}%${QCLIENT_ID}\$OlcRTC_Server${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
     read -p "Нажмите Enter для возврата в меню..."
