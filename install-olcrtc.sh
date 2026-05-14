@@ -188,7 +188,7 @@ install_olcrtc() {
         echo -e "${CYAN}Шаг 1: Выберите провайдера:${NC}"
         echo -e " 1) ${YELLOW}telemost (Yandex)${NC}       - стабильно работает"
         echo -e " 2) ${MAGENTA}wbstream (Wildberries)${NC} - стабильно работает"
-        echo -e " 3) ${CYAN}jazz     (Sber SaluteJazz)${NC} - работает нестабильно"
+        echo -e " 3) ${CYAN}jazz     (Sber SaluteJazz)${NC} - пока НЕ работает - система блокирует подключение к комнате c VPS"
         echo -e " 0) Назад в главное меню"
         read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
 
