@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.2.2"
+SCRIPT_VERSION="v2.2.3"
 
 # Массив русских имён для бота (Jazz)
 RU_NAMES=("Александр" "Мария" "Иван" "Елена" "Дмитрий" "Анна" "Сергей" "Ольга" "Михаил" "Екатерина" "Виктор" "Наталья")
@@ -421,7 +421,7 @@ install_olcrtc() {
 
     # [3/6] Зависимости и Go (динамическая загрузка последней версии)
     echo -e "\n${CYAN}[3/6] Установка последней версии Go...${NC}"
-    apt-get install -yq git wget curl build-essential
+    apt-get install -yq git wget curl build-essential ffmpeg
     LATEST_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
     echo -e "${YELLOW}Устанавливаем Go ${LATEST_GO_VERSION}...${NC}"
     wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/${LATEST_GO_VERSION}.linux-amd64.tar.gz"
@@ -652,7 +652,13 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+    # Обновляем конфигурацию systemd для корректного обнаружения ffmpeg и новых путей
     systemctl daemon-reload
+
+    # Открываем UDP-порты для WebRTC (STUN/TURN) — сброс таймаутов
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow 10000:60000/udp >/dev/null 2>&1
+    fi
     systemctl enable olcrtc
     systemctl restart olcrtc
 
