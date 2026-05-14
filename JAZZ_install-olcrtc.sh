@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.2.0"
+SCRIPT_VERSION="v2.2.1"
 
 # Массив русских имён для бота (Jazz)
 RU_NAMES=("Александр" "Мария" "Иван" "Елена" "Дмитрий" "Анна" "Сергей" "Ольга" "Михаил" "Екатерина" "Виктор" "Наталья")
@@ -525,18 +525,18 @@ install_olcrtc() {
                 cp "$JAZZ_FILE" "${JAZZ_FILE}.bak"
                 echo -e "${CYAN}  Резервная копия создана: ${JAZZ_FILE}.bak${NC}"
 
-                # Патчим: заменяем participantName на сгенерированное русское имя
-                sed -i 's|"participantName":[[:space:]]*p\.Name,|"participantName": "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
+                # Патчим: заменяем participantName на сгенерированное русское имя (конкатенация p.Name + имя)
+                sed -i 's|"participantName":.*|"participantName": p.Name + "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
                 
-                if grep -q '"participantName": "'"${BOT_NAME}"'"' "$JAZZ_FILE"; then
-                    echo -e "${GREEN}  ✓ participantName успешно заменён на ${BOT_NAME}${NC}"
+                if grep -q 'participantName.*+.*"'"${BOT_NAME}"'"' "$JAZZ_FILE"; then
+                    echo -e "${GREEN}  ✓ participantName успешно заменён на p.Name + \"${BOT_NAME}\"${NC}"
                 else
                     echo -e "${YELLOW}  ⚠ Не удалось заменить participantName${NC}"
                 fi
 
                 # Патчим: заменяем password с конкатенацией строк для совместимости с Go
                 if [ -n "$S_ROOM_PASSWORD" ]; then
-                    sed -i 's|"password":[[:space:]]*password,|"password": password + "'"${S_ROOM_PASSWORD}"'",|g' "$JAZZ_FILE"
+                    sed -i 's|"password":.*|"password": password + "'"${S_ROOM_PASSWORD}"'",|g' "$JAZZ_FILE"
                     
                     if grep -q "password + \"${S_ROOM_PASSWORD}\"" "$JAZZ_FILE"; then
                         echo -e "${GREEN}  ✓ password успешно заменён на: password + \"${S_ROOM_PASSWORD}\"${NC}"
@@ -550,9 +550,9 @@ install_olcrtc() {
                 # Возвращаемся в корень репозитория
                 cd ~/olcrtc
 
-                # Проверяем что патч применился
-                if grep -q '"participantName": "'"${BOT_NAME}"'"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
-                    echo -e "${GREEN}✓ Верификация: патч Jazz API v4 успешно интегрирован!${NC}"
+                # Проверяем что патч применился (ищем p.Name + имя бота)
+                if grep -q 'participantName.*+.*"'"${BOT_NAME}"'"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
+                    echo -e "${GREEN}✓ Верификация: патч Jazz API v5 успешно интегрирован!${NC}"
                 else
                     echo -e "${YELLOW}⚠ Верификация не удалась, но продолжаем сборку${NC}"
                 fi
