@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.8"
+SCRIPT_VERSION="v2.0.9"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -532,6 +532,17 @@ install_olcrtc() {
     mkdir -p /opt/olcrtc/data
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
 
+    # ─────────────────────────────────────────────────────────────
+    # Формирование обязательных флагов транспорта
+    # (требуются для бинарника версии после обновления master branch)
+    # ─────────────────────────────────────────────────────────────
+    case $TRANSPORT in
+        vp8channel)    TRANSPORT_FLAGS="-vp8-fps 60 -vp8-batch 64" ;;
+        seichannel)    TRANSPORT_FLAGS="-fps 60 -batch 64 -frag 900 -ack-ms 2000" ;;
+        videochannel)  TRANSPORT_FLAGS="-video-codec qrcode -video-w 1080 -video-h 1080 -video-fps 60 -video-bitrate 5000k -video-hw none" ;;
+        *)             TRANSPORT_FLAGS="" ;;
+    esac
+
     cat <<EOF > /etc/systemd/system/olcrtc.service
 [Unit]
 Description=OlcRTC Proxy Server
@@ -541,7 +552,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier $PROVIDER -transport $TRANSPORT -link direct -dns 1.1.1.1:53 -data data -id "$ROOM_ID" -key "$ENC_KEY" -client-id "$CLIENT_ID" $TRANSPORT_FLAGS
 Restart=always
 RestartSec=5
 
@@ -726,8 +737,10 @@ quick_install() {
     # Лучшие параметры для каждого провайдера
     if [[ "$QP" == "wbstream" ]]; then
         QT="datachannel"
+        QTFLAGS=""
     else
         QT="vp8channel"
+        QTFLAGS="-vp8-fps 60 -vp8-batch 64"
     fi
 
     # Автоматическая тихая очистка предыдущей установки (без вопросов)
@@ -852,7 +865,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/olcrtc
-ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}"
+ExecStart=/opt/olcrtc/olcrtc -mode srv -carrier ${QP} -transport ${QT} -link direct -dns 1.1.1.1:53 -data data -id "${QROOM_ID}" -key "${QENC_KEY}" -client-id "${QCLIENT_ID}" ${QTFLAGS}
 Restart=always
 RestartSec=5
 
