@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.9"
+SCRIPT_VERSION="v2.0.10"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -379,10 +379,12 @@ install_olcrtc() {
         echo -e "${YELLOW}Swap файл уже существует, пропускаем.${NC}"
     fi
 
-    # [3/7] Зависимости и Go
-    echo -e "\n${CYAN}[3/7] Установка Go 1.21.10 (стабильная версия)...${NC}"
+    # [3/7] Зависимости и Go (динамическая загрузка последней версии)
+    echo -e "\n${CYAN}[3/7] Установка последней версии Go...${NC}"
     apt-get install -yq git wget curl build-essential
-    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/go1.21.10.linux-amd64.tar.gz"
+    LATEST_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
+    echo -e "${YELLOW}Устанавливаем Go ${LATEST_GO_VERSION}...${NC}"
+    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/${LATEST_GO_VERSION}.linux-amd64.tar.gz"
     rm -rf /usr/local/go
     tar -C /usr/local -xzf /tmp/go_download.tar.gz
     rm -f /tmp/go_download.tar.gz
@@ -786,16 +788,17 @@ quick_install() {
     QPID=$!; qwait "Настройка swap"
     qstep "Swap готов"
 
-    # [3] Go 1.21.10 + зависимости
+    # [3] Go (динамическая загрузка последней версии)
     (
         apt-get install -yq git wget curl build-essential >/dev/null 2>&1
-        wget -qO /tmp/go_quick.tar.gz "https://go.dev/dl/go1.21.10.linux-amd64.tar.gz"
+        QUICK_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
+        wget -qO /tmp/go_quick.tar.gz "https://go.dev/dl/${QUICK_GO_VERSION}.linux-amd64.tar.gz"
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go_quick.tar.gz
         rm -f /tmp/go_quick.tar.gz
         echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
     ) &
-    QPID=$!; qwait "Установка Go 1.21.10"
+    QPID=$!; qwait "Установка Go ${QUICK_GO_VERSION}"
     [ $QSTATUS -ne 0 ] && { echo -e "${RED}  ✖ Ошибка установки Go${NC}"; exit 1; }
     export PATH=$PATH:/usr/local/go/bin
     qstep "Go установлен"
