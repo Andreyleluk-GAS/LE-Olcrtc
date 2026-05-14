@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.15"
+SCRIPT_VERSION="v2.0.16"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -361,8 +361,10 @@ install_olcrtc() {
 
     # [4/6] Установка Mage
     echo -e "\n${CYAN}[4/6] Установка системы сборки Mage...${NC}"
-    mkdir -p ~/go/bin
+    mkdir -p ~/go/bin ~/go/tmp ~/go/cache
     export GOPATH=~/go
+    export GOTMPDIR=~/go/tmp
+    export GOCACHE=~/go/cache
     export PATH=$PATH:$GOPATH/bin
     cd ~
     rm -rf mage
