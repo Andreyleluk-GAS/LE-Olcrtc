@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.1.1"
+SCRIPT_VERSION="v2.1.2"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -426,12 +426,12 @@ install_olcrtc() {
     cd olcrtc
 
     # ─────────────────────────────────────────────────────────────
-    # JAZZ API PATCH v2: Исправление Join-запроса для нового Jazz Next API
-    # Добавляет participantName, supportedFeatures и password в payload
-    # Целевой путь: ~/olcrtc/internal/provider/jazz/
+    # JAZZ API PATCH v3: Исправление Join-запроса для нового Jazz Next API
+    # Хардкодит participantName и password в jazz.go
+    # Целевой путь: ~/olcrtc/internal/provider/jazz/jazz.go
     # ─────────────────────────────────────────────────────────────
     if [[ "$PROVIDER" == "jazz" ]]; then
-        echo -e "${CYAN}Применяю патч для Jazz Next API v2...${NC}"
+        echo -e "${CYAN}Применяю патч для Jazz Next API v3...${NC}"
 
         # Проверяем что директория существует
         if [ ! -d "internal/provider/jazz" ]; then
@@ -439,85 +439,61 @@ install_olcrtc() {
             echo -e "${YELLOW}  Структура репозитория могла измениться.${NC}"
             echo -e "${YELLOW}  Продолжаем сборку без патча...${NC}"
         else
-            echo -e "${YELLOW}  Ищу файлы с логикой Join в internal/provider/jazz/...${NC}"
-
-            # Ищем все Go файлы в директории jazz
+            # Ищем файл jazz.go в директории internal/provider/jazz
             cd internal/provider/jazz
-            PATCH_APPLIED=0
-
-            # Метод 1: Ищем файлы содержащие "event" и "join" (case insensitive)
-            for f in *.go; do
-                if [ -f "$f" ] && grep -qi 'event.*join\|join.*event\|"join"\|"event"' "$f" 2>/dev/null; then
-                    echo -e "${YELLOW}  Найден файл с Join логикой: $f${NC}"
-
-                    # Создаём резервную копию
-                    cp "$f" "${f}.bak"
-                    echo -e "${CYAN}  Резервная копия создана: ${f}.bak${NC}"
-
-                    # Патчим: добавляем participantName и supportedFeatures после "roomId"
-                    # Ищем строку: "roomId" и после неё добавляем новые поля
-                    if grep -q '"roomId"' "$f"; then
-                        # Заменяем строку с roomId, добавляя новые поля
-                        sed -i 's/"roomId": \([^,}]*\)/"roomId": \1, "participantName": "Olcbox-Node", "supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/g' "$f"
-                        
-                        echo -e "${GREEN}  ✓ Добавлены participantName и supportedFeatures${NC}"
-                        PATCH_APPLIED=1
-
-                        # Добавляем password если он задан
-                        if [ -n "$ROOM_PASSWORD" ]; then
-                            # Добавляем password после supportedFeatures
-                            sed -i 's/"supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/"supportedFeatures": {"attachedRooms": true, "sessionGroups": true}, "password": "'"$ROOM_PASSWORD"'"/g' "$f"
-                            echo -e "${GREEN}  ✓ Добавлен пароль комнаты: $ROOM_PASSWORD${NC}"
-                        fi
-                        
+            JAZZ_FILE=""
+            
+            if [ -f "jazz.go" ]; then
+                JAZZ_FILE="jazz.go"
+            else
+                # Ищем любой файл содержащий "password" и "participantName"
+                for f in *.go; do
+                    if [ -f "$f" ] && grep -q '"password":.*password' "$f" 2>/dev/null; then
+                        JAZZ_FILE="$f"
                         break
                     fi
+                done
+            fi
+
+            if [ -z "$JAZZ_FILE" ]; then
+                echo -e "${RED}✖ Файл jazz.go не найден в internal/provider/jazz/!${NC}"
+                echo -e "${YELLOW}  Продолжаем сборку без патча...${NC}"
+                cd ~/olcrtc
+            else
+                echo -e "${YELLOW}  Найден файл: ${JAZZ_FILE}${NC}"
+
+                # Создаём резервную копию
+                cp "$JAZZ_FILE" "${JAZZ_FILE}.bak"
+                echo -e "${CYAN}  Резервная копия создана: ${JAZZ_FILE}.bak${NC}"
+
+                # Патчим: заменяем "password" и "participantName" на хардкодированные значения
+                # Заменяем "participantName": p.Name, на "participantName": "Olcbox-Node",
+                sed -i 's/"participantName":[[:space:]]*p\.Name,/"participantName": "Olcbox-Node",/g' "$JAZZ_FILE"
+                
+                if grep -q '"participantName": "Olcbox-Node"' "$JAZZ_FILE"; then
+                    echo -e "${GREEN}  ✓ participantName успешно заменён на Olcbox-Node${NC}"
+                else
+                    echo -e "${YELLOW}  ⚠ Не удалось заменить participantName${NC}"
                 fi
-            done
 
-            # Возвращаемся в корень репозитория
-            cd ~/olcrtc
+                # Заменяем "password": password, на "password": "$S_ROOM_PASSWORD",
+                sed -i 's/"password":[[:space:]]*password,/"password": "'"$ROOM_PASSWORD"'",/g' "$JAZZ_FILE"
+                
+                if grep -q "\"password\": \"$ROOM_PASSWORD\"" "$JAZZ_FILE"; then
+                    echo -e "${GREEN}  ✓ password успешно заменён на: $ROOM_PASSWORD${NC}"
+                else
+                    echo -e "${YELLOW}  ⚠ Не удалось заменить password${NC}"
+                fi
 
-            # Проверяем что патч применился
-            if [ "$PATCH_APPLIED" -eq 1 ]; then
-                if grep -q "Olcbox-Node" "internal/provider/jazz/"*.go 2>/dev/null; then
-                    echo -e "${GREEN}✓ Верификация: патч Jazz API успешно интегрирован!${NC}"
+                # Возвращаемся в корень репозитория
+                cd ~/olcrtc
+
+                # Проверяем что патч применился
+                if grep -q '"participantName": "Olcbox-Node"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
+                    echo -e "${GREEN}✓ Верификация: патч Jazz API v3 успешно интегрирован!${NC}"
                 else
                     echo -e "${YELLOW}⚠ Верификация не удалась, но продолжаем сборку${NC}"
                 fi
-            else
-                echo -e "${YELLOW}⚠ Файл с Join логикой не найден или патч не применился.${NC}"
-                echo -e "${YELLOW}  Продолжаем сборку со стандартным кодом.${NC}"
-                
-                # Пробуем альтернативный поиск - любой файл с "roomId"
-                echo -e "${CYAN}  Пробую альтернативный поиск (roomId)...${NC}"
-                cd internal/provider/jazz
-                for f in *.go; do
-                    if [ -f "$f" ] && grep -q 'roomId' "$f" 2>/dev/null; then
-                        echo -e "${YELLOW}  Найден файл с roomId: $f${NC}"
-                        cp "$f" "${f}.bak"
-                        
-                        # Простой патч для roomId
-                        if grep -q '"roomId"' "$f"; then
-                            sed -i 's/"roomId": \([^,}]*\)/"roomId": \1, "participantName": "Olcbox-Node", "supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/g' "$f"
-                            
-                            if [ -n "$ROOM_PASSWORD" ]; then
-                                sed -i 's/"supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/"supportedFeatures": {"attachedRooms": true, "sessionGroups": true}, "password": "'"$ROOM_PASSWORD"'"/g' "$f"
-                            fi
-                            
-                            PATCH_APPLIED=1
-                            echo -e "${GREEN}  ✓ Альтернативный патч применён!${NC}"
-                            break
-                        fi
-                    fi
-                done
-                cd ~/olcrtc
-            fi
-
-            if [ "$PATCH_APPLIED" -eq 1 ]; then
-                echo -e "${GREEN}✓ Патч Jazz API v2 успешно применён!${NC}"
-            else
-                echo -e "${YELLOW}⚠ Патч не удалось применить.${NC}"
             fi
         fi
     fi
