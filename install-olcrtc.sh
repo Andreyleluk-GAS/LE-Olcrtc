@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.0.14"
+SCRIPT_VERSION="v2.0.15"
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -118,6 +118,9 @@ show_status() {
         echo -e "Ссылка для участников (WB Stream):"
         echo -e "  ${YELLOW}https://stream.wb.ru/room/${S_ROOM_ID}${NC}"
     fi
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
+    echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
     echo -e "${MAGENTA}=================================================${NC}"
 
     read -p "Нажмите Enter для возврата в меню..."
@@ -542,6 +545,9 @@ ENV_EOF
         echo -e "${MAGENTA}=================================================${NC}"
         echo -e "URI для быстрого импорта в Olcbox:"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
+        echo -e "${MAGENTA}=================================================${NC}"
+        echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
+        echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
         echo -e "${MAGENTA}=================================================${NC}"
     else
         echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
