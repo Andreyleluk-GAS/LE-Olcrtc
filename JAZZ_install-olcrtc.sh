@@ -9,7 +9,10 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.1.2"
+SCRIPT_VERSION="v2.2.0"
+
+# Массив русских имён для бота (Jazz)
+RU_NAMES=("Александр" "Мария" "Иван" "Елена" "Дмитрий" "Анна" "Сергей" "Ольга" "Михаил" "Екатерина" "Виктор" "Наталья")
 
 # Определяет оптимальный флаг параллелизма для сборки Go
 # на основе свободного места на диске и числа CPU.
@@ -114,6 +117,9 @@ show_status() {
         echo -e "Ссылка для участников (SaluteJazz):"
         echo -e "  ${YELLOW}https://salutejazz.ru/calls/${S_ROOM_ID}${NC}"
         echo -e "  Код конференции: ${YELLOW}${S_ROOM_ID}@salutejazz.ru${NC}"
+        if [ -n "${S_BOT_NAME}" ]; then
+            echo -e "  Имя бота: ${YELLOW}${S_BOT_NAME}${NC}"
+        fi
     elif [[ "${S_PROVIDER}" == "wbstream" && -n "${S_ROOM_ID}" ]]; then
         echo -e "Ссылка для участников (WB Stream):"
         echo -e "  ${YELLOW}https://stream.wb.ru/room/${S_ROOM_ID}${NC}"
@@ -151,6 +157,33 @@ print_logo() {
 EOF
     echo -e "${YELLOW}                                     Версия: ${SCRIPT_VERSION}${NC}"
     echo -e "${NC}"
+}
+
+# Функция парсинга URL для Jazz
+# Извлекает ROOM_ID и S_ROOM_PASSWORD из ссылки типа https://salutejazz.ru/calls/nlg7d4?psw=OAdbHAc...
+parse_jazz_url() {
+    local input_url="$1"
+    
+    # Если URL содержит ?psw=, извлекаем пароль
+    if [[ "$input_url" == *"?psw="* ]]; then
+        S_ROOM_PASSWORD="${input_url##*?psw=}"
+        # Убираем всё после & или другие query параметры
+        S_ROOM_PASSWORD="${S_ROOM_PASSWORD%%&*}"
+    else
+        S_ROOM_PASSWORD=""
+    fi
+    
+    # Извлекаем ROOM_ID: убираем всё до последнего / и всё после ?
+    local temp="${input_url%%\?*}"  # Убираем query параметры
+    temp="${temp##*/}"              # Убираем всё до последнего /
+    
+    echo "$temp"
+}
+
+# Функция генерации случайного русского имени
+generate_bot_name() {
+    local idx=$((RANDOM % ${#RU_NAMES[@]}))
+    echo "${RU_NAMES[idx]}"
 }
 
 # Функция установки
@@ -200,6 +233,13 @@ install_olcrtc() {
             3) PROVIDER="jazz" ;;
             *) PROVIDER="telemost" ;;
         esac
+
+        # --- Генерация случайного русского имени для бота (только для Jazz) ---
+        BOT_NAME=""
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            BOT_NAME=$(generate_bot_name)
+            echo -e "${GREEN}  ➤ Имя бота для конференции: ${YELLOW}${BOT_NAME}${NC}"
+        fi
 
         # --- 2. ВЫБОР ТРАНСПОРТА ---
         # Матрица совместимости: + работает | * работает но нежелательно | - не поддерживается
@@ -264,12 +304,44 @@ install_olcrtc() {
         echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/ ${YELLOW}[ваш_id]${NC}\n"
 
         read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
-        ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+        
+        # Для Jazz используем улучшенный парсинг URL
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            S_ROOM_PASSWORD=""
+            ROOM_ID=$(parse_jazz_url "$ROOM_ID")
+            
+            # Если пароль не был извлечён из URL, спрашиваем отдельно
+            if [ -z "$S_ROOM_PASSWORD" ]; then
+                echo -e "${CYAN}Пароль комнаты (если есть):${NC}"
+                read -p "Введите пароль из ?psw=... (оставьте пустым если пароля нет): " S_ROOM_PASSWORD
+                if [ -n "$S_ROOM_PASSWORD" ]; then
+                    echo -e "${GREEN}Пароль комнаты сохранён: ${S_ROOM_PASSWORD}${NC}"
+                else
+                    echo -e "${YELLOW}Пароль не указан — комната будет открытой.${NC}"
+                fi
+            else
+                echo -e "${GREEN}Пароль комнаты извлечён из ссылки: ${S_ROOM_PASSWORD}${NC}"
+            fi
+        else
+            # Для остальных провайдеров - стандартный парсинг
+            ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+        fi
+        
         while [ -z "$ROOM_ID" ]; do
             echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
             read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
-            ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+            if [[ "$PROVIDER" == "jazz" ]]; then
+                S_ROOM_PASSWORD=""
+                ROOM_ID=$(parse_jazz_url "$ROOM_ID")
+                if [ -z "$S_ROOM_PASSWORD" ]; then
+                    read -p "Введите пароль из ?psw=...: " S_ROOM_PASSWORD
+                fi
+            else
+                ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+            fi
         done
+        
+        echo -e "${GREEN}Чистый ID звонка: ${ROOM_ID}${NC}"
 
         # --- 4. ВЫБОР КЛЮЧА ШИФРОВАНИЯ ---
         echo -e "\n${CYAN}Шаг 4: Настройка ключа шифрования:${NC}"
@@ -309,21 +381,6 @@ install_olcrtc() {
         else
             CLIENT_ID=$(openssl rand -hex 4)
             echo -e "${YELLOW}Сгенерирован ID клиента: $CLIENT_ID${NC}"
-        fi
-
-        # --- 6. ПАРОЛЬ КОМНАТЫ (только для Jazz) ---
-        ROOM_PASSWORD=""
-        if [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "\n${CYAN}Шаг 6: Пароль комнаты (для Jazz):${NC}"
-            echo -e "${YELLOW}💡 Где найти пароль?${NC}"
-            echo -e "Пароль комнаты SaluteJazz указан в ссылке-приглашении после ${MAGENTA}?psw=...${NC}"
-            echo -e "Пример: https://salutejazz.ru/calls/abc123?psw=${YELLOW}secretpassword${NC}\n"
-            read -p "Введите пароль комнаты (оставьте пустым если пароля нет): " ROOM_PASSWORD
-            if [ -n "$ROOM_PASSWORD" ]; then
-                echo -e "${GREEN}Пароль комнаты сохранён.${NC}"
-            else
-                echo -e "${YELLOW}Пароль не указан — комната будет открытой.${NC}"
-            fi
         fi
 
         # После всех шагов — возврат в цикл невозможен
@@ -426,12 +483,14 @@ install_olcrtc() {
     cd olcrtc
 
     # ─────────────────────────────────────────────────────────────
-    # JAZZ API PATCH v3: Исправление Join-запроса для нового Jazz Next API
-    # Хардкодит participantName и password в jazz.go
+    # JAZZ API PATCH v4: Исправление Join-запроса для нового Jazz Next API
+    # Использует BOT_NAME и S_ROOM_PASSWORD из конфигурации
     # Целевой путь: ~/olcrtc/internal/provider/jazz/jazz.go
     # ─────────────────────────────────────────────────────────────
     if [[ "$PROVIDER" == "jazz" ]]; then
-        echo -e "${CYAN}Применяю патч для Jazz Next API v3...${NC}"
+        echo -e "${CYAN}Применяю патч для Jazz Next API v4...${NC}"
+        echo -e "${YELLOW}  ➤ Используем имя бота: ${BOT_NAME}${NC}"
+        echo -e "${YELLOW}  ➤ Используем пароль: ${S_ROOM_PASSWORD:-<нет>}${NC}"
 
         # Проверяем что директория существует
         if [ ! -d "internal/provider/jazz" ]; then
@@ -466,31 +525,34 @@ install_olcrtc() {
                 cp "$JAZZ_FILE" "${JAZZ_FILE}.bak"
                 echo -e "${CYAN}  Резервная копия создана: ${JAZZ_FILE}.bak${NC}"
 
-                # Патчим: заменяем "password" и "participantName" на хардкодированные значения
-                # Заменяем "participantName": p.Name, на "participantName": "Olcbox-Node",
-                sed -i 's/"participantName":[[:space:]]*p\.Name,/"participantName": "Olcbox-Node",/g' "$JAZZ_FILE"
+                # Патчим: заменяем participantName на сгенерированное русское имя
+                sed -i 's|"participantName":[[:space:]]*p\.Name,|"participantName": "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
                 
-                if grep -q '"participantName": "Olcbox-Node"' "$JAZZ_FILE"; then
-                    echo -e "${GREEN}  ✓ participantName успешно заменён на Olcbox-Node${NC}"
+                if grep -q '"participantName": "'"${BOT_NAME}"'"' "$JAZZ_FILE"; then
+                    echo -e "${GREEN}  ✓ participantName успешно заменён на ${BOT_NAME}${NC}"
                 else
                     echo -e "${YELLOW}  ⚠ Не удалось заменить participantName${NC}"
                 fi
 
-                # Заменяем "password": password, на "password": "$S_ROOM_PASSWORD",
-                sed -i 's/"password":[[:space:]]*password,/"password": "'"$ROOM_PASSWORD"'",/g' "$JAZZ_FILE"
-                
-                if grep -q "\"password\": \"$ROOM_PASSWORD\"" "$JAZZ_FILE"; then
-                    echo -e "${GREEN}  ✓ password успешно заменён на: $ROOM_PASSWORD${NC}"
+                # Патчим: заменяем password с конкатенацией строк для совместимости с Go
+                if [ -n "$S_ROOM_PASSWORD" ]; then
+                    sed -i 's|"password":[[:space:]]*password,|"password": password + "'"${S_ROOM_PASSWORD}"'",|g' "$JAZZ_FILE"
+                    
+                    if grep -q "password + \"${S_ROOM_PASSWORD}\"" "$JAZZ_FILE"; then
+                        echo -e "${GREEN}  ✓ password успешно заменён на: password + \"${S_ROOM_PASSWORD}\"${NC}"
+                    else
+                        echo -e "${YELLOW}  ⚠ Не удалось заменить password${NC}"
+                    fi
                 else
-                    echo -e "${YELLOW}  ⚠ Не удалось заменить password${NC}"
+                    echo -e "${YELLOW}  ⚠ Пароль пустой, пропускаем замену password${NC}"
                 fi
 
                 # Возвращаемся в корень репозитория
                 cd ~/olcrtc
 
                 # Проверяем что патч применился
-                if grep -q '"participantName": "Olcbox-Node"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
-                    echo -e "${GREEN}✓ Верификация: патч Jazz API v3 успешно интегрирован!${NC}"
+                if grep -q '"participantName": "'"${BOT_NAME}"'"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
+                    echo -e "${GREEN}✓ Верификация: патч Jazz API v4 успешно интегрирован!${NC}"
                 else
                     echo -e "${YELLOW}⚠ Верификация не удалась, но продолжаем сборку${NC}"
                 fi
@@ -604,7 +666,8 @@ S_TRANSPORT="${TRANSPORT}"
 S_ROOM_ID="${ROOM_ID}"
 S_ENC_KEY="${ENC_KEY}"
 S_CLIENT_ID="${CLIENT_ID}"
-S_ROOM_PASSWORD="${ROOM_PASSWORD}"
+S_ROOM_PASSWORD="${S_ROOM_PASSWORD}"
+S_BOT_NAME="${BOT_NAME}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
 
@@ -624,6 +687,7 @@ ENV_EOF
             echo -e "Ссылка для участников (SaluteJazz):"
             echo -e "  ${YELLOW}https://salutejazz.ru/calls/${ROOM_ID}${NC}"
             echo -e "  Код конференции: ${YELLOW}${ROOM_ID}@salutejazz.ru${NC}"
+            echo -e "${GREEN}[+] Имя бота в конференции: ${YELLOW}${BOT_NAME}${NC}"
         fi
         echo -e "${MAGENTA}=================================================${NC}"
 
@@ -633,6 +697,9 @@ ENV_EOF
         echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
         echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
         echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "Имя бота:\t${YELLOW}$BOT_NAME${NC}"
+        fi
         echo -e "${MAGENTA}=================================================${NC}"
         echo -e "URI для быстрого импорта в Olcbox:"
         echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
@@ -686,6 +753,9 @@ ENV_EOF
         echo -e "  Room ID:    ${YELLOW}$ROOM_ID${NC}"
         echo -e "  Ключ:       ${YELLOW}$ENC_KEY${NC}"
         echo -e "  Client ID: ${YELLOW}$CLIENT_ID${NC}"
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "  Имя бота:  ${YELLOW}$BOT_NAME${NC}"
+        fi
     fi
 
     read -p "Нажмите Enter для возврата в меню..."
