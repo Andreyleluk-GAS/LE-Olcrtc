@@ -9,7 +9,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # Нет цвета
 
 # Версия скрипта
-SCRIPT_VERSION="v2.2.1"
+SCRIPT_VERSION="v2.2.2"
 
 # Массив русских имён для бота (Jazz)
 RU_NAMES=("Александр" "Мария" "Иван" "Елена" "Дмитрий" "Анна" "Сергей" "Ольга" "Михаил" "Екатерина" "Виктор" "Наталья")
@@ -483,12 +483,12 @@ install_olcrtc() {
     cd olcrtc
 
     # ─────────────────────────────────────────────────────────────
-    # JAZZ API PATCH v4: Исправление Join-запроса для нового Jazz Next API
+    # JAZZ API PATCH v5: Исправление Join-запроса для нового Jazz Next API
     # Использует BOT_NAME и S_ROOM_PASSWORD из конфигурации
-    # Целевой путь: ~/olcrtc/internal/provider/jazz/jazz.go
+    # Целевой путь: ~/olcrtc/internal/provider/jazz/jazz.go (или api.go)
     # ─────────────────────────────────────────────────────────────
     if [[ "$PROVIDER" == "jazz" ]]; then
-        echo -e "${CYAN}Применяю патч для Jazz Next API v4...${NC}"
+        echo -e "${CYAN}Применяю патч для Jazz Next API v5...${NC}"
         echo -e "${YELLOW}  ➤ Используем имя бота: ${BOT_NAME}${NC}"
         echo -e "${YELLOW}  ➤ Используем пароль: ${S_ROOM_PASSWORD:-<нет>}${NC}"
 
@@ -498,16 +498,22 @@ install_olcrtc() {
             echo -e "${YELLOW}  Структура репозитория могла измениться.${NC}"
             echo -e "${YELLOW}  Продолжаем сборку без патча...${NC}"
         else
-            # Ищем файл jazz.go в директории internal/provider/jazz
+            # Ищем файл jazz.go или api.go в директории internal/provider/jazz
             cd internal/provider/jazz
             JAZZ_FILE=""
             
-            if [ -f "jazz.go" ]; then
-                JAZZ_FILE="jazz.go"
-            else
-                # Ищем любой файл содержащий "password" и "participantName"
+            # Приоритет: jazz.go -> api.go -> любой файл с password
+            for candidate in "jazz.go" "api.go"; do
+                if [ -f "$candidate" ]; then
+                    JAZZ_FILE="$candidate"
+                    break
+                fi
+            done
+            
+            if [ -z "$JAZZ_FILE" ]; then
+                # Ищем любой файл содержащий "password"
                 for f in *.go; do
-                    if [ -f "$f" ] && grep -q '"password":.*password' "$f" 2>/dev/null; then
+                    if [ -f "$f" ] && grep -q '"password":' "$f" 2>/dev/null; then
                         JAZZ_FILE="$f"
                         break
                     fi
@@ -515,7 +521,7 @@ install_olcrtc() {
             fi
 
             if [ -z "$JAZZ_FILE" ]; then
-                echo -e "${RED}✖ Файл jazz.go не найден в internal/provider/jazz/!${NC}"
+                echo -e "${RED}✖ Файл с JSON payload не найден в internal/provider/jazz/!${NC}"
                 echo -e "${YELLOW}  Продолжаем сборку без патча...${NC}"
                 cd ~/olcrtc
             else
@@ -525,34 +531,37 @@ install_olcrtc() {
                 cp "$JAZZ_FILE" "${JAZZ_FILE}.bak"
                 echo -e "${CYAN}  Резервная копия создана: ${JAZZ_FILE}.bak${NC}"
 
-                # Патчим: заменяем participantName на сгенерированное русское имя (конкатенация p.Name + имя)
-                sed -i 's|"participantName":.*|"participantName": p.Name + "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
-                
-                if grep -q 'participantName.*+.*"'"${BOT_NAME}"'"' "$JAZZ_FILE"; then
-                    echo -e "${GREEN}  ✓ participantName успешно заменён на p.Name + \"${BOT_NAME}\"${NC}"
-                else
-                    echo -e "${YELLOW}  ⚠ Не удалось заменить participantName${NC}"
-                fi
+                # ─────────────────────────────────────────────────────────────
+                # v2.2.2: Новая логика патчинга
+                # 1. Удаляем participantName, если он уже есть (избегаем дублей)
+                # 2. Заменяем строку с паролем и добавляем participantName после неё
+                # ─────────────────────────────────────────────────────────────
 
-                # Патчим: заменяем password с конкатенацией строк для совместимости с Go
+                # 1. На всякий случай удаляем participantName, если он там есть
+                sed -i '/"participantName":/d' "$JAZZ_FILE"
+                echo -e "${CYAN}  [1/2] Удаление существующего participantName (если был)${NC}"
+
+                # 2. Заменяем строку с паролем и сразу после неё вставляем participantName
                 if [ -n "$S_ROOM_PASSWORD" ]; then
-                    sed -i 's|"password":.*|"password": password + "'"${S_ROOM_PASSWORD}"'",|g' "$JAZZ_FILE"
+                    sed -i 's|"password":.*|"password": password + "'"${S_ROOM_PASSWORD}"'",\n"participantName": "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
                     
-                    if grep -q "password + \"${S_ROOM_PASSWORD}\"" "$JAZZ_FILE"; then
-                        echo -e "${GREEN}  ✓ password успешно заменён на: password + \"${S_ROOM_PASSWORD}\"${NC}"
+                    if grep -q "password + \"${S_ROOM_PASSWORD}\"" "$JAZZ_FILE" && grep -q '"participantName":.*'"${BOT_NAME}"'' "$JAZZ_FILE"; then
+                        echo -e "${GREEN}  ✓ patch v2.2.2 успешно интегрирован!${NC}"
                     else
-                        echo -e "${YELLOW}  ⚠ Не удалось заменить password${NC}"
+                        echo -e "${YELLOW}  ⚠ Патч частично применился, проверяем вручную...${NC}"
                     fi
                 else
-                    echo -e "${YELLOW}  ⚠ Пароль пустой, пропускаем замену password${NC}"
+                    # Если пароля нет — просто добавляем participantName после password
+                    sed -i 's|"password":.*|"password": password,\n"participantName": "'"${BOT_NAME}"'",|g' "$JAZZ_FILE"
+                    echo -e "${YELLOW}  ⚠ Пароль пустой, participantName добавлен с пустым password${NC}"
                 fi
 
                 # Возвращаемся в корень репозитория
                 cd ~/olcrtc
 
-                # Проверяем что патч применился (ищем p.Name + имя бота)
-                if grep -q 'participantName.*+.*"'"${BOT_NAME}"'"' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
-                    echo -e "${GREEN}✓ Верификация: патч Jazz API v5 успешно интегрирован!${NC}"
+                # Проверяем что патч применился
+                if grep -q '"participantName":.*'"${BOT_NAME}"'' "internal/provider/jazz/${JAZZ_FILE}" 2>/dev/null; then
+                    echo -e "${GREEN}✓ Верификация: патч Jazz API v5 (v2.2.2) успешно интегрирован!${NC}"
                 else
                     echo -e "${YELLOW}⚠ Верификация не удалась, но продолжаем сборку${NC}"
                 fi
