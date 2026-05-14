@@ -425,6 +425,76 @@ install_olcrtc() {
     git clone -q https://github.com/openlibrecommunity/olcrtc.git --recurse-submodules
     cd olcrtc
 
+    # ─────────────────────────────────────────────────────────────
+    # JAZZ API PATCH: Исправление Join-запроса для нового Jazz Next API
+    # Добавляет participantName, supportedFeatures и password в payload
+    # ─────────────────────────────────────────────────────────────
+    if [[ "$PROVIDER" == "jazz" ]]; then
+        echo -e "${CYAN}Применяю патч для Jazz Next API...${NC}"
+
+        # Ищем транспортный файл Jazz
+        JAZZ_TRANSPORT_FILE=$(find . -path "*/jazz*transport*.go" -type f 2>/dev/null | head -n 1)
+        
+        if [ -n "$JAZZ_TRANSPORT_FILE" ] && [ -f "$JAZZ_TRANSPORT_FILE" ]; then
+            echo -e "${YELLOW}Найден транспортный файл: ${JAZZ_TRANSPORT_FILE}${NC}"
+
+            # Создаём резервную копию
+            cp "$JAZZ_TRANSPORT_FILE" "${JAZZ_TRANSPORT_FILE}.bak"
+
+            # Поиск строк с конструкцией Join payload и патчинг
+            # Ищем где создаётся JSON для Join запроса (обычно содержит "roomId", "sdp", "type")
+            if grep -q '"roomId"' "$JAZZ_TRANSPORT_FILE"; then
+                # Метод 1: sed для добавления полей после "roomId"
+                # Добавляем participantName, supportedFeatures и password в начальный JSON объект
+                sed -i 's/"roomId":\s*\([^,}\)]*\)/"roomId": \1,\n        "participantName": "Olcbox-Node",\n        "supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/g' "$JAZZ_TRANSPORT_FILE"
+                
+                echo -e "${GREEN}✓ Добавлены participantName и supportedFeatures${NC}"
+
+                # Метод 2: Добавляем password если он задан
+                if [ -n "$ROOM_PASSWORD" ]; then
+                    # Ищем строку с participantName и добавляем password после supportedFeatures
+                    sed -i 's/"supportedFeatures":\s*{"attachedRooms":\s*true,\s*"sessionGroups":\s*true}/"supportedFeatures": {"attachedRooms": true, "sessionGroups": true},\n        "password": "'"$ROOM_PASSWORD"'"/g' "$JAZZ_TRANSPORT_FILE"
+                    echo -e "${GREEN}✓ Добавлен пароль комнаты${NC}"
+                fi
+
+                echo -e "${GREEN}✓ Патч Jazz API успешно применён!${NC}"
+            else
+                echo -e "${YELLOW}⚠ Не удалось найти структуру Join payload для патчинга.${NC}"
+                echo -e "${YELLOW}  Попытка альтернативного патчинга...${NC}"
+                
+                # Альтернативный метод: ищем любой JSON объект с roomId и добавляем поля
+                # Ищем строку с "roomId" независимо от контекста
+                if grep -q 'roomId' "$JAZZ_TRANSPORT_FILE"; then
+                    # Простой патч: находим строку содержащую roomId и добавляем после неё новые поля
+                    sed -i '/roomId/{
+                        s/\("roomId":\s*"[^"]*"\)/\1,\
+        "participantName": "Olcbox-Node",\
+        "supportedFeatures": {"attachedRooms": true, "sessionGroups": true}/
+                    }' "$JAZZ_TRANSPORT_FILE"
+                    
+                    if [ -n "$ROOM_PASSWORD" ]; then
+                        sed -i '/"supportedFeatures":/{
+                            s/{"attachedRooms": true, "sessionGroups": true}/{"attachedRooms": true, "sessionGroups": true},\
+        "password": "'"$ROOM_PASSWORD"'/
+                        }' "$JAZZ_TRANSPORT_FILE"
+                    fi
+                    
+                    echo -e "${GREEN}✓ Альтернативный патч применён!${NC}"
+                fi
+            fi
+
+            # Проверяем что патч применился
+            if grep -q "Olcbox-Node" "$JAZZ_TRANSPORT_FILE"; then
+                echo -e "${GREEN}✓ Верификация: патч успешно интегрирован в исходный код${NC}"
+            else
+                echo -e "${YELLOW}⚠ Верификация не удалась, но продолжаем сборку${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠ Транспортный файл Jazz не найден.${NC}"
+            echo -e "${YELLOW}  Продолжаем сборку со стандартным кодом.${NC}"
+        fi
+    fi
+
     # Перенаправляем tmp/cache Go с tmpfs(/tmp) на диск — исключает "no space left on device"
     mkdir -p ~/go/tmp ~/go/cache
     export GOTMPDIR=~/go/tmp
@@ -531,6 +601,7 @@ S_TRANSPORT="${TRANSPORT}"
 S_ROOM_ID="${ROOM_ID}"
 S_ENC_KEY="${ENC_KEY}"
 S_CLIENT_ID="${CLIENT_ID}"
+S_ROOM_PASSWORD="${ROOM_PASSWORD}"
 ENV_EOF
         chmod 600 /opt/olcrtc/.env
 
