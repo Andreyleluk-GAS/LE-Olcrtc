@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo -e "\e[34m[1/6] Установка зависимостей (Golang, Curl)...\e[0m"
+echo -e "\e[34m[1/6] Установка зависимостей...\e[0m"
 apt-get update -y > /dev/null 2>&1
 apt-get install -y golang curl > /dev/null 2>&1
 
@@ -15,29 +15,85 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+// Структура для приема настроек из браузера
+type Config struct {
+	RoomID    string `json:"roomId"`
+	Transport string `json:"transport"`
+	Width     string `json:"width"`
+	Fps       string `json:"fps"`
+}
 
 func main() {
 	fs := http.FileServer(http.Dir("./templates"))
 	http.Handle("/", fs)
 
+	// Статус бота
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		out, _ := exec.Command("systemctl", "is-active", "olcrtc").Output()
 		status := strings.TrimSpace(string(out))
 		json.NewEncoder(w).Encode(map[string]bool{"active": status == "active"})
 	})
 
+	// Управление питанием
 	http.HandleFunc("/api/start", func(w http.ResponseWriter, r *http.Request) {
 		exec.Command("systemctl", "start", "olcrtc").Run()
 		w.WriteHeader(http.StatusOK)
 	})
-
 	http.HandleFunc("/api/stop", func(w http.ResponseWriter, r *http.Request) {
 		exec.Command("systemctl", "stop", "olcrtc").Run()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// МАГИЯ: Сохранение настроек и перезапись системной службы
+	http.HandleFunc("/api/save", func(w http.ResponseWriter, r *http.Request) {
+		var c Config
+		json.NewDecoder(r.Body).Decode(&c)
+
+		// Базовые ключи (в будущем можно генерировать случайно)
+		key := "698ea7dc7927515c2583075b984cb3bf1134d1e9bd5963f3bf5b4a03fdcd1179"
+		clientID := "9cf2464e"
+
+		// Формируем базовую команду
+		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier jazz -transport %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", c.Transport, c.RoomID, key, clientID)
+
+		// Добавляем специфичные флаги в зависимости от транспорта
+		if c.Transport == "videochannel" {
+			execCmd += fmt.Sprintf(" -video-w %s -video-h 480 -video-fps %s -video-bitrate 1000000 -video-hw none", c.Width, c.Fps)
+		} else {
+			execCmd += " -vp8-fps 60 -vp8-batch 64"
+		}
+
+		// Шаблон системной службы
+		serviceContent := fmt.Sprintf(`[Unit]
+Description=OlcRTC Proxy Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/olcrtc
+ExecStart=%s
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target`, execCmd)
+
+		// Записываем файл в Linux
+		os.WriteFile("/etc/systemd/system/olcrtc.service", []byte(serviceContent), 0644)
+		
+		// Перезагружаем демоны и перезапускаем бота
+		exec.Command("systemctl", "daemon-reload").Run()
+		exec.Command("systemctl", "restart", "olcrtc").Run()
+
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -59,7 +115,7 @@ cat << 'EOF' > templates/index.html
 </head>
 <body>
     <div class="container mt-5">
-        <h2 class="mb-4 text-primary">Olc-UI <small class="text-muted fs-6">v0.2 Beta</small></h2>
+        <h2 class="mb-4 text-primary">Olc-UI <small class="text-muted fs-6">v1.0</small></h2>
         
         <div class="row">
             <div class="col-md-6 mb-4">
@@ -82,11 +138,11 @@ cat << 'EOF' > templates/index.html
                         <form id="configForm">
                             <div class="mb-3">
                                 <label class="form-label">ID Комнаты (Jazz)</label>
-                                <input type="text" class="form-control bg-dark text-light border-secondary" value="nlg7d4">
+                                <input type="text" id="roomId" class="form-control bg-dark text-light border-secondary" value="nlg7d4">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Транспорт</label>
-                                <select class="form-select bg-dark text-light border-secondary">
+                                <select id="transport" class="form-select bg-dark text-light border-secondary">
                                     <option value="videochannel">videochannel (FFmpeg - Рекомендуется)</option>
                                     <option value="vp8channel">vp8channel (Встроенный)</option>
                                 </select>
@@ -94,14 +150,14 @@ cat << 'EOF' > templates/index.html
                             <div class="row">
                                 <div class="col-6 mb-3">
                                     <label class="form-label">Ширина (px)</label>
-                                    <input type="number" class="form-control bg-dark text-light border-secondary" value="640">
+                                    <input type="number" id="width" class="form-control bg-dark text-light border-secondary" value="640">
                                 </div>
                                 <div class="col-6 mb-3">
                                     <label class="form-label">FPS</label>
-                                    <input type="number" class="form-control bg-dark text-light border-secondary" value="30">
+                                    <input type="number" id="fps" class="form-control bg-dark text-light border-secondary" value="30">
                                 </div>
                             </div>
-                            <button type="button" class="btn btn-primary w-100" onclick="alert('В этой версии настройки пока визуальные. Сохранение JSON конфигов добавим в v1.0!')">💾 Сохранить конфиг</button>
+                            <button type="button" class="btn btn-primary w-100" id="btn-save" onclick="saveConfig()">💾 Сохранить и Перезапустить</button>
                         </form>
                     </div>
                 </div>
@@ -127,11 +183,40 @@ cat << 'EOF' > templates/index.html
                 }
             } catch(e) {}
         }
+
         async function controlBot(action) {
             await fetch('/api/' + action);
             setTimeout(checkStatus, 1000);
         }
-        setInterval(checkStatus, 3000); checkStatus();
+
+        // НОВАЯ ФУНКЦИЯ: Сохранение настроек
+        async function saveConfig() {
+            let btn = document.getElementById('btn-save');
+            btn.innerText = "⏳ Сохранение...";
+            btn.disabled = true;
+
+            const configData = {
+                roomId: document.getElementById('roomId').value,
+                transport: document.getElementById('transport').value,
+                width: document.getElementById('width').value,
+                fps: document.getElementById('fps').value
+            };
+
+            await fetch('/api/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            });
+
+            setTimeout(() => {
+                btn.innerText = "✅ Успешно! (Сохранить еще раз)";
+                btn.disabled = false;
+                checkStatus();
+            }, 1500);
+        }
+
+        setInterval(checkStatus, 3000); 
+        checkStatus();
     </script>
 </body>
 </html>
@@ -140,31 +225,13 @@ EOF
 echo -e "\e[34m[5/6] Компиляция панели...\e[0m"
 go build -o olc-ui-bin main.go
 
-echo -e "\e[34m[6/6] Настройка системной службы...\e[0m"
-cat << 'EOF' > /etc/systemd/system/olc-ui.service
-[Unit]
-Description=OlcRTC Web Panel (Olc-UI)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/olc-ui
-ExecStart=/opt/olc-ui/olc-ui-bin
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
+echo -e "\e[34m[6/6] Перезапуск службы панели...\e[0m"
 systemctl daemon-reload
-systemctl enable olc-ui > /dev/null 2>&1
 systemctl restart olc-ui
 
 IP=$(curl -s ifconfig.me)
 echo -e "\e[32m=======================================================\e[0m"
-echo -e "\e[32m✅ УСТАНОВКА OLC-UI УСПЕШНО ЗАВЕРШЕНА!\e[0m"
-echo -e "🌐 Твоя панель доступна по адресу:"
+echo -e "\e[32m✅ ОБНОВЛЕНИЕ ДО V1.0 УСПЕШНО ЗАВЕРШЕНО!\e[0m"
+echo -e "🌐 Открой панель (или обнови страницу):"
 echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
 echo -e "\e[32m=======================================================\e[0m"
