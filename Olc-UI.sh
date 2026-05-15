@@ -148,4 +148,139 @@ cat << 'EOF' > templates/index.html
                 <div class="mb-4">
                     <label class="form-label text-muted">Технология захвата (Транспорт)</label>
                     <select id="transport" class="form-select form-select-lg bg-dark text-white border-0">
-                        <option value="videochannel">FFmpeg Videochannel (Рекомендуется)</option
+                        <option value="videochannel">FFmpeg Videochannel (Рекомендуется)</option>
+                        <option value="vp8channel">Стандартный VP8</option>
+                    </select>
+                </div>
+                <div class="d-flex justify-content-between mt-5">
+                    <button class="btn btn-outline-secondary px-4" onclick="showStep(1)">← Назад</button>
+                    <button class="btn btn-primary px-5 btn-lg" onclick="startLaunch()">Запустить магию ✨</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="step-3" class="step glass-card p-5 shadow-lg">
+            <h3 class="mb-4" id="launch-title">Подключение бота...</h3>
+            <div class="progress mb-4" style="height: 10px;">
+                <div id="launch-progress" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
+            </div>
+            <div class="terminal mb-4" id="terminal-output">
+                > Инициализация системы...<br>
+            </div>
+            <button id="btn-dashboard" class="btn btn-success btn-lg w-100 d-none" onclick="showStep(4)">Перейти в Панель Управления</button>
+        </div>
+
+        <div id="step-4" class="step glass-card p-5 shadow-lg">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3 class="mb-0">Статус работы</h3>
+                <span id="status-badge" class="badge bg-success fs-6 px-3 py-2">Бот Online</span>
+            </div>
+            <div class="row text-start mb-4">
+                <div class="col-6"><p class="text-muted mb-1">Комната:</p><h5 id="dash-room" class="text-white">-</h5></div>
+                <div class="col-6"><p class="text-muted mb-1">Транспорт:</p><h5 id="dash-transport" class="text-white">-</h5></div>
+            </div>
+            <hr class="border-secondary">
+            <div class="d-flex gap-3 mt-4">
+                <button class="btn btn-danger w-50" onclick="stopBot()">■ Остановить трансляцию</button>
+                <button class="btn btn-outline-primary w-50" onclick="showStep(1)">⚙️ Создать новую</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPlatform = '';
+
+        function showStep(stepNum) {
+            document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+            document.getElementById('step-' + stepNum).classList.add('active');
+        }
+
+        function selectPlatform(platform) {
+            currentPlatform = platform;
+            document.getElementById('selected-platform-name').innerText = (platform === 'jazz') ? 'Sber Jazz' : platform;
+            showStep(2);
+        }
+
+        function writeTerminal(text, delay) {
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    document.getElementById('terminal-output').innerHTML += '> ' + text + '<br>';
+                    document.getElementById('terminal-output').scrollTop = document.getElementById('terminal-output').scrollHeight;
+                    resolve();
+                }, delay);
+            });
+        }
+
+        async function startLaunch() {
+            showStep(3);
+            const roomId = document.getElementById('roomId').value || 'default_room';
+            const transport = document.getElementById('transport').value;
+            
+            document.getElementById('btn-dashboard').classList.add('d-none');
+            document.getElementById('terminal-output').innerHTML = '> Инициализация системы...<br>';
+            document.getElementById('launch-progress').style.width = '10%';
+
+            // Визуальная магия в консоли
+            await writeTerminal('Проверка доступности портов...', 800);
+            document.getElementById('launch-progress').style.width = '30%';
+            await writeTerminal('Генерация конфигов для ' + transport + '...', 1000);
+            
+            // Отправляем реальный запрос на сервер
+            const configData = { platform: currentPlatform, roomId: roomId, transport: transport };
+            await fetch('/api/launch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            });
+
+            document.getElementById('launch-progress').style.width = '70%';
+            await writeTerminal('Запуск демона OlcRTC...', 1200);
+            await writeTerminal('Соединение с сигнальным сервером...', 1500);
+            
+            document.getElementById('launch-progress').style.width = '100%';
+            document.getElementById('launch-progress').classList.remove('bg-primary');
+            document.getElementById('launch-progress').classList.add('bg-success');
+            await writeTerminal('<span style="color: #fff; background: green; padding: 2px 5px;">УСПЕШНО! Бот зашел в комнату.</span>', 500);
+            
+            document.getElementById('launch-title').innerText = "Подключение завершено!";
+            document.getElementById('btn-dashboard').classList.remove('d-none');
+
+            // Заполняем дашборд
+            document.getElementById('dash-room').innerText = roomId;
+            document.getElementById('dash-transport').innerText = transport;
+        }
+
+        async function stopBot() {
+            await fetch('/api/stop');
+            document.getElementById('status-badge').className = 'badge bg-danger fs-6 px-3 py-2';
+            document.getElementById('status-badge').innerText = 'Бот Offline';
+            alert('Бот остановлен!');
+        }
+
+        // Проверка статуса при загрузке
+        async function initCheck() {
+            try {
+                let res = await fetch('/api/status');
+                let data = await res.json();
+                if (data.active) { showStep(4); }
+            } catch(e) {}
+        }
+        initCheck();
+    </script>
+</body>
+</html>
+EOF
+
+echo -e "\e[34m[5/6] Компиляция Studio...\e[0m"
+go build -o olc-ui-bin main.go
+
+echo -e "\e[34m[6/6] Перезапуск службы...\e[0m"
+systemctl daemon-reload
+systemctl restart olc-ui
+
+IP=$(curl -s ifconfig.me)
+echo -e "\e[32m=======================================================\e[0m"
+echo -e "\e[32m✨ OLC-RTC STUDIO УСПЕШНО УСТАНОВЛЕНА! ✨\e[0m"
+echo -e "🌐 Открой панель (или обнови страницу с очисткой кэша Ctrl+F5):"
+echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
+echo -e "\e[32m=======================================================\e[0m"
