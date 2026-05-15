@@ -24,9 +24,10 @@ import (
 )
 
 type Config struct {
-	Platform  string `json:"platform"`
-	RoomID    string `json:"roomId"`
-	Transport string `json:"transport"`
+	Platform       string `json:"platform"`
+	LinkOrRoom     string `json:"linkOrRoom"`
+	ConnectionType string `json:"connectionType"`
+	Tunnel         string `json:"tunnel"`
 }
 
 func main() {
@@ -50,14 +51,15 @@ func main() {
 
 		key := "698ea7dc7927515c2583075b984cb3bf1134d1e9bd5963f3bf5b4a03fdcd1179"
 		clientID := "9cf2464e"
-
-		// Базовая логика под Jazz (в будущем добавишь Яндекс)
-		carrier := "jazz"
-		if c.Platform != "jazz" { carrier = "custom" }
-
-		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -transport %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, c.Transport, c.RoomID, key, clientID)
+		carrier := "custom"
 		
-		if c.Transport == "videochannel" {
+		if c.Platform == "SberJazz" { carrier = "jazz" }
+		if c.Platform == "Яндекс Телемост" { carrier = "yandex" }
+
+		// Формируем команду (адаптировано под разные платформы)
+		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link %s -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, c.ConnectionType, c.LinkOrRoom, key, clientID)
+		
+		if c.Tunnel == "videochannel" || c.Tunnel == "udp" {
 			execCmd += " -video-w 640 -video-h 480 -video-fps 30 -video-bitrate 1000000 -video-hw none"
 		} else {
 			execCmd += " -vp8-fps 60 -vp8-batch 64"
@@ -101,103 +103,189 @@ cat << 'EOF' > templates/index.html
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #0f1115; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .glass-card { background: rgba(30, 33, 40, 0.9); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; backdrop-filter: blur(10px); }
-        .platform-btn { transition: all 0.3s ease; border: 2px solid transparent; cursor: pointer; border-radius: 12px; background: #1a1d24; padding: 20px; }
-        .platform-btn:hover, .platform-btn.active { border-color: #0d6efd; transform: translateY(-5px); background: #22262f; box-shadow: 0 10px 20px rgba(13,110,253,0.2); }
-        .step { display: none; animation: fadeIn 0.5s ease-in-out; }
+        .glass-card { background: rgba(30, 33, 40, 0.95); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .platform-btn { transition: all 0.3s ease; border: 2px solid transparent; cursor: pointer; border-radius: 12px; background: #1a1d24; padding: 25px 15px; }
+        .platform-btn:hover { border-color: #0d6efd; transform: translateY(-5px); background: #22262f; box-shadow: 0 10px 20px rgba(13,110,253,0.15); }
+        .step { display: none; animation: fadeIn 0.4s ease-in-out; }
         .step.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .terminal { background: #050505; font-family: monospace; color: #00ff00; padding: 15px; border-radius: 8px; height: 150px; overflow-y: auto; text-align: left; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+        .terminal { background: #050505; font-family: monospace; color: #00ff00; padding: 15px; border-radius: 8px; height: 160px; overflow-y: auto; text-align: left; border: 1px solid #333; }
+        .history-item { cursor: pointer; transition: background 0.2s; border-radius: 8px; }
+        .history-item:hover { background: rgba(255,255,255,0.05); }
     </style>
 </head>
 <body>
     <div class="container mt-5 text-center" style="max-width: 800px;">
-        <h1 class="mb-4 fw-bold" style="background: linear-gradient(90deg, #0d6efd, #0dcaf0); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">OlcRTC Studio</h1>
+        <h1 class="mb-5 fw-bold" style="color: #fff; letter-spacing: 1px;">OlcRTC <span style="color: #0d6efd;">Studio</span></h1>
         
-        <div id="step-1" class="step active glass-card p-5 shadow-lg">
-            <h3 class="mb-4">Куда отправим бота?</h3>
-            <div class="row g-4 mb-4">
+        <div id="step-1" class="step active glass-card p-5">
+            <h4 class="mb-4 text-white">Выберите платформу подключения</h4>
+            <div class="row g-4 mb-5">
                 <div class="col-md-4">
-                    <div class="platform-btn" onclick="selectPlatform('jazz')">
-                        <h4 class="mb-2 text-primary">Sber Jazz</h4>
-                        <small class="text-muted">Полная поддержка WebRTC</small>
+                    <div class="platform-btn" onclick="selectPlatform('Яндекс Телемост')">
+                        <h5 class="mb-0 text-warning" style="font-weight: 600;">Яндекс Телемост</h5>
                     </div>
                 </div>
                 <div class="col-md-4">
-                    <div class="platform-btn" onclick="alert('Модуль Яндекса в разработке!')">
-                        <h4 class="mb-2 text-warning">Yandex</h4>
-                        <small class="text-muted">Телемост (Скоро)</small>
+                    <div class="platform-btn" onclick="selectPlatform('WebRTC')">
+                        <h5 class="mb-0 text-success" style="font-weight: 600;">WebRTC</h5>
                     </div>
                 </div>
                 <div class="col-md-4">
-                    <div class="platform-btn" onclick="alert('Модуль кастомной настройки в разработке!')">
-                        <h4 class="mb-2 text-success">Custom</h4>
-                        <small class="text-muted">Свой SIP / WebRTC</small>
+                    <div class="platform-btn" onclick="selectPlatform('SberJazz')">
+                        <h5 class="mb-0 text-primary" style="font-weight: 600;">SberJazz</h5>
                     </div>
                 </div>
             </div>
+            
+            <div id="history-container" class="text-start mt-4 d-none">
+                <h6 class="text-muted mb-3 text-uppercase" style="letter-spacing: 1px; font-size: 0.85rem;">Последние конфигурации</h6>
+                <div id="history-list" class="list-group list-group-flush border-top border-secondary pt-2">
+                    </div>
+            </div>
         </div>
 
-        <div id="step-2" class="step glass-card p-5 shadow-lg">
-            <h3 class="mb-4">Настройка комнаты <span id="selected-platform-name" class="text-primary"></span></h3>
+        <div id="step-2" class="step glass-card p-5">
+            <h3 class="mb-4 text-white">Настройка: <span id="selected-platform-name" class="text-primary"></span></h3>
             <div class="text-start">
-                <div class="mb-4">
-                    <label class="form-label text-muted">ID Конференции (Room ID)</label>
-                    <input type="text" id="roomId" class="form-control form-control-lg bg-dark text-white border-0" placeholder="Например: nlg7d4">
+                
+                <div id="form-yandex" class="dynamic-form d-none">
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Ссылка на встречу</label>
+                        <input type="text" id="ya-link" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="https://telemost.yandex.ru/j/...">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Тип соединения</label>
+                        <select id="ya-conn" class="form-select form-select-lg bg-dark text-white border-secondary">
+                            <option value="direct">Direct (Прямое)</option>
+                            <option value="proxy">Proxy (Через сервер)</option>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Туннель</label>
+                        <select id="ya-tunnel" class="form-select form-select-lg bg-dark text-white border-secondary">
+                            <option value="udp">UDP</option>
+                            <option value="tcp">TCP</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="mb-4">
-                    <label class="form-label text-muted">Технология захвата (Транспорт)</label>
-                    <select id="transport" class="form-select form-select-lg bg-dark text-white border-0">
-                        <option value="videochannel">FFmpeg Videochannel (Рекомендуется)</option>
-                        <option value="vp8channel">Стандартный VP8</option>
-                    </select>
+
+                <div id="form-standard" class="dynamic-form d-none">
+                    <div class="mb-4">
+                        <label class="form-label text-muted">ID Комнаты</label>
+                        <input type="text" id="std-room" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="Например: nlg7d4">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Транспорт</label>
+                        <select id="std-tunnel" class="form-select form-select-lg bg-dark text-white border-secondary">
+                            <option value="videochannel">FFmpeg (Videochannel)</option>
+                            <option value="vp8channel">Стандартный (VP8)</option>
+                        </select>
+                    </div>
                 </div>
+
                 <div class="d-flex justify-content-between mt-5">
                     <button class="btn btn-outline-secondary px-4" onclick="showStep(1)">← Назад</button>
-                    <button class="btn btn-primary px-5 btn-lg" onclick="startLaunch()">Запустить магию ✨</button>
+                    <button class="btn btn-primary px-5 btn-lg" onclick="startLaunch()">Далее →</button>
                 </div>
             </div>
         </div>
 
-        <div id="step-3" class="step glass-card p-5 shadow-lg">
-            <h3 class="mb-4" id="launch-title">Подключение бота...</h3>
-            <div class="progress mb-4" style="height: 10px;">
+        <div id="step-3" class="step glass-card p-5">
+            <h3 class="mb-4 text-white" id="launch-title">Подключение...</h3>
+            <div class="progress mb-4 bg-dark" style="height: 8px; border-radius: 4px;">
                 <div id="launch-progress" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
             </div>
-            <div class="terminal mb-4" id="terminal-output">
-                > Инициализация системы...<br>
+            <div class="terminal shadow-inner mb-4" id="terminal-output">
+                > Инициализация подсистемы...<br>
             </div>
-            <button id="btn-dashboard" class="btn btn-success btn-lg w-100 d-none" onclick="showStep(4)">Перейти в Панель Управления</button>
+            <button id="btn-dashboard" class="btn btn-success btn-lg w-100 d-none shadow" onclick="showStep(4)">Перейти к результату ✨</button>
         </div>
 
-        <div id="step-4" class="step glass-card p-5 shadow-lg">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h3 class="mb-0">Статус работы</h3>
-                <span id="status-badge" class="badge bg-success fs-6 px-3 py-2">Бот Online</span>
+        <div id="step-4" class="step glass-card p-5">
+            <div class="text-center mb-5">
+                <div class="d-inline-block bg-success bg-opacity-25 p-3 rounded-circle mb-3">
+                    <span style="font-size: 2rem;">✅</span>
+                </div>
+                <h3 class="text-white">Готово! Успешное подключение.</h3>
+                <p class="text-muted" id="dash-info">Платформа: - | Туннель: -</p>
             </div>
-            <div class="row text-start mb-4">
-                <div class="col-6"><p class="text-muted mb-1">Комната:</p><h5 id="dash-room" class="text-white">-</h5></div>
-                <div class="col-6"><p class="text-muted mb-1">Транспорт:</p><h5 id="dash-transport" class="text-white">-</h5></div>
+            
+            <div class="text-start p-4 bg-dark rounded-3 border border-secondary mb-4 shadow-sm">
+                <label class="form-label text-muted mb-2">Ваша ссылка для доступа:</label>
+                <div class="input-group">
+                    <input type="text" id="result-link" class="form-control bg-dark text-info border-secondary fs-5" readonly value="Генерация...">
+                    <button class="btn btn-outline-secondary" onclick="copyLink()">📋 Копировать</button>
+                </div>
             </div>
-            <hr class="border-secondary">
-            <div class="d-flex gap-3 mt-4">
-                <button class="btn btn-danger w-50" onclick="stopBot()">■ Остановить трансляцию</button>
-                <button class="btn btn-outline-primary w-50" onclick="showStep(1)">⚙️ Создать новую</button>
+
+            <hr class="border-secondary my-4">
+            <div class="d-flex gap-3">
+                <button class="btn btn-danger w-50" onclick="stopBot()">■ Остановить процесс</button>
+                <button class="btn btn-outline-light w-50" onclick="showStep(1)">+ Новая сессия</button>
             </div>
         </div>
     </div>
 
     <script>
         let currentPlatform = '';
+        let currentConfig = {};
+
+        // Загрузка истории при старте
+        function loadHistory() {
+            const history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
+            const container = document.getElementById('history-container');
+            const list = document.getElementById('history-list');
+            
+            if (history.length > 0) {
+                container.classList.remove('d-none');
+                list.innerHTML = '';
+                history.forEach((item, index) => {
+                    list.innerHTML += `
+                        <div class="history-item d-flex justify-content-between align-items-center p-3 mb-2 bg-dark rounded" onclick='loadConfig(${index})'>
+                            <div>
+                                <strong class="text-white">${item.platform}</strong>
+                                <span class="text-muted ms-2 fs-6">${item.linkOrRoom}</span>
+                            </div>
+                            <span class="badge bg-secondary">▶ Запуск</span>
+                        </div>
+                    `;
+                });
+            }
+        }
+
+        function loadConfig(index) {
+            const history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
+            const conf = history[index];
+            currentPlatform = conf.platform;
+            
+            if (conf.platform === 'Яндекс Телемост') {
+                document.getElementById('ya-link').value = conf.linkOrRoom;
+                document.getElementById('ya-conn').value = conf.connectionType;
+                document.getElementById('ya-tunnel').value = conf.tunnel;
+            } else {
+                document.getElementById('std-room').value = conf.linkOrRoom;
+                document.getElementById('std-tunnel').value = conf.tunnel;
+            }
+            selectPlatform(conf.platform);
+        }
 
         function showStep(stepNum) {
             document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
             document.getElementById('step-' + stepNum).classList.add('active');
+            if (stepNum === 1) loadHistory();
         }
 
         function selectPlatform(platform) {
             currentPlatform = platform;
-            document.getElementById('selected-platform-name').innerText = (platform === 'jazz') ? 'Sber Jazz' : platform;
+            document.getElementById('selected-platform-name').innerText = platform;
+            
+            document.querySelectorAll('.dynamic-form').forEach(el => el.classList.add('d-none'));
+            if (platform === 'Яндекс Телемост') {
+                document.getElementById('form-yandex').classList.remove('d-none');
+            } else {
+                document.getElementById('form-standard').classList.remove('d-none');
+            }
             showStep(2);
         }
 
@@ -213,59 +301,82 @@ cat << 'EOF' > templates/index.html
 
         async function startLaunch() {
             showStep(3);
-            const roomId = document.getElementById('roomId').value || 'default_room';
-            const transport = document.getElementById('transport').value;
             
-            document.getElementById('btn-dashboard').classList.add('d-none');
-            document.getElementById('terminal-output').innerHTML = '> Инициализация системы...<br>';
-            document.getElementById('launch-progress').style.width = '10%';
+            // Собираем данные в зависимости от формы
+            if (currentPlatform === 'Яндекс Телемост') {
+                currentConfig = {
+                    platform: currentPlatform,
+                    linkOrRoom: document.getElementById('ya-link').value || 'https://telemost.yandex.ru/',
+                    connectionType: document.getElementById('ya-conn').value,
+                    tunnel: document.getElementById('ya-tunnel').value
+                };
+            } else {
+                currentConfig = {
+                    platform: currentPlatform,
+                    linkOrRoom: document.getElementById('std-room').value || 'default',
+                    connectionType: 'direct',
+                    tunnel: document.getElementById('std-tunnel').value
+                };
+            }
 
-            // Визуальная магия в консоли
-            await writeTerminal('Проверка доступности портов...', 800);
-            document.getElementById('launch-progress').style.width = '30%';
-            await writeTerminal('Генерация конфигов для ' + transport + '...', 1000);
+            // Сохраняем в историю (оставляем только 3 последних)
+            let history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
+            history.unshift(currentConfig);
+            if(history.length > 3) history.pop();
+            localStorage.setItem('olcrtc_history', JSON.stringify(history));
+
+            // Анимация интерфейса
+            document.getElementById('btn-dashboard').classList.add('d-none');
+            document.getElementById('terminal-output').innerHTML = '> Инициализация параметров для ' + currentPlatform + '...<br>';
+            document.getElementById('launch-progress').style.width = '10%';
+            document.getElementById('launch-progress').className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+
+            await writeTerminal('Настройка типа соединения: ' + currentConfig.connectionType + '...', 800);
+            document.getElementById('launch-progress').style.width = '40%';
             
-            // Отправляем реальный запрос на сервер
-            const configData = { platform: currentPlatform, roomId: roomId, transport: transport };
+            // Отправляем API запрос на бэкенд
             await fetch('/api/launch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(configData)
+                body: JSON.stringify(currentConfig)
             });
 
+            await writeTerminal('Открытие порталов WebRTC (' + currentConfig.tunnel + ')...', 1000);
             document.getElementById('launch-progress').style.width = '70%';
-            await writeTerminal('Запуск демона OlcRTC...', 1200);
-            await writeTerminal('Соединение с сигнальным сервером...', 1500);
+            await writeTerminal('Подключение к медиа-серверу...', 1200);
             
             document.getElementById('launch-progress').style.width = '100%';
             document.getElementById('launch-progress').classList.remove('bg-primary');
             document.getElementById('launch-progress').classList.add('bg-success');
-            await writeTerminal('<span style="color: #fff; background: green; padding: 2px 5px;">УСПЕШНО! Бот зашел в комнату.</span>', 500);
+            await writeTerminal('<span style="color: #000; background: #00ff00; padding: 2px 6px; border-radius: 3px;">ЧПОК! Соединение установлено.</span>', 600);
             
-            document.getElementById('launch-title').innerText = "Подключение завершено!";
+            document.getElementById('launch-title').innerText = "Магия совершена!";
             document.getElementById('btn-dashboard').classList.remove('d-none');
 
-            // Заполняем дашборд
-            document.getElementById('dash-room').innerText = roomId;
-            document.getElementById('dash-transport').innerText = transport;
+            // Подготовка финального экрана
+            document.getElementById('dash-info').innerText = `Платформа: ${currentPlatform} | Туннель: ${currentConfig.tunnel.toUpperCase()}`;
+            
+            // Генерируем красивую ссылку
+            const serverIP = window.location.hostname;
+            const uniqueId = Math.random().toString(36).substring(2, 8);
+            document.getElementById('result-link').value = `http://${serverIP}:8080/join/${uniqueId}`;
         }
 
         async function stopBot() {
             await fetch('/api/stop');
-            document.getElementById('status-badge').className = 'badge bg-danger fs-6 px-3 py-2';
-            document.getElementById('status-badge').innerText = 'Бот Offline';
-            alert('Бот остановлен!');
+            alert('Процесс успешно остановлен.');
+            showStep(1);
         }
 
-        // Проверка статуса при загрузке
-        async function initCheck() {
-            try {
-                let res = await fetch('/api/status');
-                let data = await res.json();
-                if (data.active) { showStep(4); }
-            } catch(e) {}
+        function copyLink() {
+            const link = document.getElementById('result-link');
+            link.select();
+            document.execCommand('copy');
+            alert('Ссылка скопирована!');
         }
-        initCheck();
+
+        // Запуск
+        loadHistory();
     </script>
 </body>
 </html>
@@ -280,7 +391,7 @@ systemctl restart olc-ui
 
 IP=$(curl -s ifconfig.me)
 echo -e "\e[32m=======================================================\e[0m"
-echo -e "\e[32m✨ OLC-RTC STUDIO УСПЕШНО УСТАНОВЛЕНА! ✨\e[0m"
-echo -e "🌐 Открой панель (или обнови страницу с очисткой кэша Ctrl+F5):"
+echo -e "\e[32m✨ OLC-RTC STUDIO УСПЕШНО ОБНОВЛЕНА! ✨\e[0m"
+echo -e "🌐 Открой панель (не забудь Ctrl+F5 для сброса кэша):"
 echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
 echo -e "\e[32m=======================================================\e[0m"
