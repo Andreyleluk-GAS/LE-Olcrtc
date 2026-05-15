@@ -394,45 +394,126 @@ install_olcrtc() {
     # Останавливаем при ошибках
     set -e
 
-    # [1/6] Проверка ОС и обновление пакетов
-    echo -e "\n${CYAN}[1/6] Проверка системы и обновление пакетов ОС...${NC}"
+    # ─────────────────────────────────────────────────────────────────────────
+    # [1/6] Полная очистка системы от старых следов Go
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[1/6] Очистка системы от старых версий Go...${NC}"
+
+    # Удаляем системный пакет golang (если был установлен через apt)
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get purge -yq golang-go 2>/dev/null || true
+        apt-get purge -yq golang 2>/dev/null || true
+        apt-get autoremove -yq 2>/dev/null || true
+    fi
+
+    # Удаляем директорию /usr/local/go со всеми файлами
+    rm -rf /usr/local/go 2>/dev/null || true
+
+    # Удаляем старые symlinks если есть
+    rm -f /usr/bin/go    2>/dev/null || true
+    rm -f /usr/bin/gofmt 2>/dev/null || true
+
+    # Удаляем старый профиль для Go
+    rm -f /etc/profile.d/go.sh 2>/dev/null || true
+
+    echo -e "${GREEN}Старые следы Go успешно удалены.${NC}"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [2/6] Динамическое определение актуальной версии Go
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[2/6] Определение актуальной версии Go...${NC}"
+
+    # Получаем latest версию с официального эндпоинта Google
+    GO_VERSION_RAW=$(curl -sL --fail https://go.dev/VERSION?m=text)
+
+    if [ -z "$GO_VERSION_RAW" ]; then
+        echo -e "${RED}✖ Не удалось получить версию Go с go.dev${NC}"
+        echo -e "${RED}  Проверьте подключение к интернету.${NC}"
+        exit 1
+    fi
+
+    # Извлекаем первую строку (например: go1.25.0)
+    GO_VERSION=$(echo "$GO_VERSION_RAW" | head -n 1 | tr -d '[:space:]')
+
+    echo -e "${GREEN}➤ Найдена актуальная версия: ${GO_VERSION}${NC}"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [3/6] Загрузка и установка Go
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[3/6] Загрузка Go ${GO_VERSION} с серверов Google...${NC}"
+
+    GO_TARBALL="/tmp/go_${GO_VERSION}.linux-amd64.tar.gz"
+
+    # Скачиваем архив
+    if ! wget -q --show-progress -O "$GO_TARBALL" "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"; then
+        echo -e "${RED}✖ Ошибка загрузки Go с go.dev${NC}"
+        rm -f "$GO_TARBALL" 2>/dev/null || true
+        exit 1
+    fi
+
+    echo -e "${GREEN}Архив успешно скачан.${NC}"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [4/6] Распаковка Go в /usr/local/
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[4/6] Распаковка Go в /usr/local/...${NC}"
+
+    # Убеждаемся что целевая директория чистая
+    rm -rf /usr/local/go 2>/dev/null || true
+
+    # Распаковываем архив
+    tar -C /usr/local -xzf "$GO_TARBALL"
+
+    # Удаляем скачанный архив — он больше не нужен
+    rm -f "$GO_TARBALL"
+
+    echo -e "${GREEN}Go успешно распакован в /usr/local/go${NC}"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [5/6] Создание symlinks для глобальной доступности команд
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[5/6] Создание symlinks для команд go и gofmt...${NC}"
+
+    # Создаём symlinks в /usr/bin/ для глобальной доступности
+    ln -sf /usr/local/go/bin/go    /usr/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/bin/gofmt
+
+    # Добавляем Go в PATH для текущей сессии
+    export PATH="/usr/local/go/bin:$PATH"
+
+    # Создаём профиль для автоматического добавления Go в PATH при каждом входе
+    echo 'export PATH="/usr/local/go/bin:$PATH"' > /etc/profile.d/go.sh
+
+    # Проверяем что Go доступен
+    if command -v go >/dev/null 2>&1; then
+        INSTALLED_GO_VERSION=$(go version 2>/dev/null | awk '{print $3}')
+        echo -e "${GREEN}✓ Symlinks созданы. Go ${INSTALLED_GO_VERSION} доступен глобально.${NC}"
+    else
+        echo -e "${YELLOW}⚠ Go установлен, но команда 'go' пока недоступна в PATH.${NC}"
+        echo -e "${YELLOW}  Перезайдите в систему или выполните: source /etc/profile.d/go.sh${NC}"
+    fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [6/6] Установка системных зависимостей (git, build-essential, ffmpeg)
+    # ─────────────────────────────────────────────────────────────────────────
+    echo -e "\n${CYAN}[6/6] Установка системных зависимостей...${NC}"
+
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
-            echo -e "${YELLOW}Предупреждение: Ваш дистрибутив ($ID) может не поддерживаться в полной мере.${NC}"
-            echo -e "${YELLOW}Рекомендуется Ubuntu или Debian.${NC}"
+            echo -e "${YELLOW}⚠ Ваш дистрибутив ($ID) может не поддерживаться в полной мере.${NC}"
+            echo -e "${YELLOW}  Рекомендуется Ubuntu или Debian.${NC}"
             sleep 3
         fi
     fi
-    apt-get update -q && apt-get upgrade -yq
 
-    # [2/6] Настройка Swap
-    echo -e "\n${CYAN}[2/6] Настройка файла подкачки (Swap 2GB)...${NC}"
-    if [ ! -f /swapfile ]; then
-        fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
-        chmod 600 /swapfile
-        mkswap /swapfile
-        swapon /swapfile
-        echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        echo -e "${GREEN}Swap файл успешно создан.${NC}"
-    else
-        echo -e "${YELLOW}Swap файл уже существует, пропускаем.${NC}"
-    fi
+    apt-get update -q
+    apt-get install -yq git build-essential ffmpeg
 
-    # [3/6] Зависимости и Go (динамическая загрузка последней версии)
-    echo -e "\n${CYAN}[3/6] Установка последней версии Go...${NC}"
-    apt-get install -yq git wget curl build-essential ffmpeg
-    LATEST_GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
-    echo -e "${YELLOW}Устанавливаем Go ${LATEST_GO_VERSION}...${NC}"
-    wget -qO /tmp/go_download.tar.gz "https://go.dev/dl/${LATEST_GO_VERSION}.linux-amd64.tar.gz"
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf /tmp/go_download.tar.gz
-    rm -f /tmp/go_download.tar.gz
-    export PATH=$PATH:/usr/local/go/bin
-    echo "export PATH=\$PATH:/usr/local/go/bin" > /etc/profile.d/go.sh
+    echo -e "${GREEN}Все системные зависимости установлены.${NC}"
 
-    # [4/6] Установка Mage
-    echo -e "\n${CYAN}[4/6] Установка системы сборки Mage...${NC}"
+    # [7/9] Установка Mage
+    echo -e "\n${CYAN}[7/9] Установка системы сборки Mage...${NC}"
     mkdir -p ~/go/bin ~/go/tmp ~/go/cache
     export GOPATH=~/go
     export GOTMPDIR=~/go/tmp
@@ -444,8 +525,8 @@ install_olcrtc() {
     cd mage
     /usr/local/go/bin/go run bootstrap.go
 
-    # [5/6] Сборка OlcRTC
-    echo -e "\n${CYAN}[5/6] Сборка исполняемого файла OlcRTC...${NC}"
+    # [8/9] Сборка OlcRTC
+    echo -e "\n${CYAN}[8/9] Сборка исполняемого файла OlcRTC...${NC}"
 
     # --- Освобождаем максимум места перед сборкой ---
     echo -e "${YELLOW}Очистка дискового пространства перед сборкой...${NC}"
@@ -617,8 +698,8 @@ install_olcrtc() {
     fi
     set -e
 
-    # [6/6] Настройка Systemd
-    echo -e "\n${CYAN}[6/6] Настройка системной службы...${NC}"
+    # [9/9] Настройка Systemd
+    echo -e "\n${CYAN}[9/9] Настройка системной службы...${NC}"
     # Останавливаем службу перед заменой бинарника (иначе: "Text file busy")
     systemctl stop olcrtc 2>/dev/null || true
     mkdir -p /opt/olcrtc/data
