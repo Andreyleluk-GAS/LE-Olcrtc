@@ -24,45 +24,63 @@ import (
 )
 
 type Config struct {
-	Platform       string `json:"platform"`
-	LinkOrRoom     string `json:"linkOrRoom"`
-	ConnectionType string `json:"connectionType"`
-	Tunnel         string `json:"tunnel"`
+	Platform string `json:"platform"`
+	RoomLink string `json:"roomLink"`
+	Tunnel   string `json:"tunnel"`
 }
 
 func main() {
 	fs := http.FileServer(http.Dir("./templates"))
 	http.Handle("/", fs)
 
+	// API: Статус
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		out, _ := exec.Command("systemctl", "is-active", "olcrtc").Output()
 		status := strings.TrimSpace(string(out))
 		json.NewEncoder(w).Encode(map[string]bool{"active": status == "active"})
 	})
 
+	// API: Остановка
 	http.HandleFunc("/api/stop", func(w http.ResponseWriter, r *http.Request) {
 		exec.Command("systemctl", "stop", "olcrtc").Run()
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// API: Чтение логов (как в консоли)
+	http.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
+		out, _ := exec.Command("journalctl", "-u", "olcrtc", "-n", "30", "--no-pager").Output()
+		w.Write(out)
+	})
+
+	// API: Удаление (Сброс)
+	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
+		exec.Command("systemctl", "stop", "olcrtc").Run()
+		exec.Command("systemctl", "disable", "olcrtc").Run()
+		os.Remove("/etc/systemd/system/olcrtc.service")
+		exec.Command("systemctl", "daemon-reload").Run()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// API: Запуск и сохранение
 	http.HandleFunc("/api/launch", func(w http.ResponseWriter, r *http.Request) {
 		var c Config
 		json.NewDecoder(r.Body).Decode(&c)
 
 		key := "698ea7dc7927515c2583075b984cb3bf1134d1e9bd5963f3bf5b4a03fdcd1179"
 		clientID := "9cf2464e"
-		carrier := "custom"
 		
+		carrier := "custom"
 		if c.Platform == "SberJazz" { carrier = "jazz" }
 		if c.Platform == "Яндекс Телемост" { carrier = "yandex" }
 
-		// Формируем команду (адаптировано под разные платформы)
-		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link %s -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, c.ConnectionType, c.LinkOrRoom, key, clientID)
+		// Формируем ту самую команду из скрипта
+		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, c.RoomLink, key, clientID)
 		
-		if c.Tunnel == "videochannel" || c.Tunnel == "udp" {
-			execCmd += " -video-w 640 -video-h 480 -video-fps 30 -video-bitrate 1000000 -video-hw none"
+		// Настройка туннеля (как было в скрипте)
+		if c.Tunnel == "videochannel" {
+			execCmd += " -transport videochannel -video-w 640 -video-h 480 -video-fps 30 -video-bitrate 1000000 -video-hw none"
 		} else {
-			execCmd += " -vp8-fps 60 -vp8-batch 64"
+			execCmd += " -transport vp8channel -vp8-fps 60 -vp8-batch 64"
 		}
 
 		serviceContent := fmt.Sprintf(`[Unit]
@@ -92,306 +110,220 @@ WantedBy=multi-user.target`, execCmd)
 }
 EOF
 
-echo -e "\e[34m[4/6] Создание интерактивного фронтенда (index.html)...\e[0m"
+echo -e "\e[34m[4/6] Создание фронтенда с логикой скрипта...\e[0m"
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
 <html lang="ru" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OlcRTC Studio</title>
+    <title>OlcRTC Управление</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #0f1115; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .glass-card { background: rgba(30, 33, 40, 0.95); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
-        .platform-btn { transition: all 0.3s ease; border: 2px solid transparent; cursor: pointer; border-radius: 12px; background: #1a1d24; padding: 25px 15px; }
-        .platform-btn:hover { border-color: #0d6efd; transform: translateY(-5px); background: #22262f; box-shadow: 0 10px 20px rgba(13,110,253,0.15); }
-        .step { display: none; animation: fadeIn 0.4s ease-in-out; }
-        .step.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
-        .terminal { background: #050505; font-family: monospace; color: #00ff00; padding: 15px; border-radius: 8px; height: 160px; overflow-y: auto; text-align: left; border: 1px solid #333; }
-        .history-item { cursor: pointer; transition: background 0.2s; border-radius: 8px; }
-        .history-item:hover { background: rgba(255,255,255,0.05); }
+        body { background-color: #121212; color: #e0e0e0; }
+        .menu-card { background: #1e1e1e; border: 1px solid #333; border-radius: 12px; transition: 0.2s; cursor: pointer; }
+        .menu-card:hover { border-color: #0d6efd; background: #252525; }
+        .view { display: none; }
+        .view.active { display: block; }
+        .logs-window { background: #000; color: #0f0; font-family: monospace; height: 300px; overflow-y: scroll; padding: 10px; border-radius: 8px; }
     </style>
 </head>
 <body>
-    <div class="container mt-5 text-center" style="max-width: 800px;">
-        <h1 class="mb-5 fw-bold" style="color: #fff; letter-spacing: 1px;">OlcRTC <span style="color: #0d6efd;">Studio</span></h1>
+    <div class="container mt-5" style="max-width: 800px;">
+        <h2 class="mb-4 text-center text-primary">Панель управления OlcRTC</h2>
         
-        <div id="step-1" class="step active glass-card p-5">
-            <h4 class="mb-4 text-white">Выберите платформу подключения</h4>
-            <div class="row g-4 mb-5">
-                <div class="col-md-4">
-                    <div class="platform-btn" onclick="selectPlatform('Яндекс Телемост')">
-                        <h5 class="mb-0 text-warning" style="font-weight: 600;">Яндекс Телемост</h5>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="platform-btn" onclick="selectPlatform('WebRTC')">
-                        <h5 class="mb-0 text-success" style="font-weight: 600;">WebRTC</h5>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="platform-btn" onclick="selectPlatform('SberJazz')">
-                        <h5 class="mb-0 text-primary" style="font-weight: 600;">SberJazz</h5>
-                    </div>
-                </div>
+        <div id="view-menu" class="view active">
+            <div class="d-flex justify-content-between align-items-center mb-4 p-3 bg-dark rounded border border-secondary">
+                <span class="fs-5">Текущий статус службы:</span>
+                <span id="status-badge" class="badge bg-secondary fs-6">Проверка...</span>
             </div>
-            
-            <div id="history-container" class="text-start mt-4 d-none">
-                <h6 class="text-muted mb-3 text-uppercase" style="letter-spacing: 1px; font-size: 0.85rem;">Последние конфигурации</h6>
-                <div id="history-list" class="list-group list-group-flush border-top border-secondary pt-2">
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="menu-card p-4 text-center" onclick="showView('view-setup')">
+                        <h4 class="text-success mb-2">▶ Настроить и Запустить</h4>
+                        <small class="text-muted">Выбрать платформу и ввести ссылку</small>
                     </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="menu-card p-4 text-center" onclick="openLogs()">
+                        <h4 class="text-info mb-2">📋 Посмотреть логи</h4>
+                        <small class="text-muted">Проверить консоль (journalctl)</small>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="menu-card p-4 text-center" onclick="apiAction('stop')">
+                        <h4 class="text-warning mb-2">■ Остановить бота</h4>
+                        <small class="text-muted">Прервать текущее подключение</small>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="menu-card p-4 text-center" onclick="deleteService()">
+                        <h4 class="text-danger mb-2">🗑 Удалить службу</h4>
+                        <small class="text-muted">Полный сброс конфигурации</small>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div id="step-2" class="step glass-card p-5">
-            <h3 class="mb-4 text-white">Настройка: <span id="selected-platform-name" class="text-primary"></span></h3>
-            <div class="text-start">
-                
-                <div id="form-yandex" class="dynamic-form d-none">
+        <div id="view-setup" class="view">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header bg-secondary text-white d-flex justify-content-between">
+                    <h5 class="mb-0">Мастер настройки</h5>
+                    <button class="btn btn-sm btn-dark" onclick="showView('view-menu')">✖ Закрыть</button>
+                </div>
+                <div class="card-body p-4">
+                    
                     <div class="mb-4">
-                        <label class="form-label text-muted">Ссылка на встречу</label>
-                        <input type="text" id="ya-link" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="https://telemost.yandex.ru/j/...">
-                    </div>
-                    <div class="mb-4">
-                        <label class="form-label text-muted">Тип соединения</label>
-                        <select id="ya-conn" class="form-select form-select-lg bg-dark text-white border-secondary">
-                            <option value="direct">Direct (Прямое)</option>
-                            <option value="proxy">Proxy (Через сервер)</option>
+                        <label class="form-label text-info">1. Выберите платформу:</label>
+                        <select id="platformSelect" class="form-select bg-dark text-white" onchange="updateForm()">
+                            <option value="Яндекс Телемост">Яндекс Телемост</option>
+                            <option value="SberJazz">SberJazz</option>
+                            <option value="WebRTC">Кастомный WebRTC</option>
                         </select>
                     </div>
+
+                    <div id="yandex-helper" class="alert alert-warning text-dark mb-4">
+                        <strong>Шаг 1:</strong> Создайте новую встречу в Яндексе.<br>
+                        <a href="https://telemost.yandex.ru/" target="_blank" class="btn btn-sm btn-primary mt-2">Создать комнату Телемост ⭧</a>
+                        <p class="mt-2 mb-0 small text-muted">Создайте, скопируйте ссылку и вернитесь сюда.</p>
+                    </div>
+
                     <div class="mb-4">
-                        <label class="form-label text-muted">Туннель</label>
-                        <select id="ya-tunnel" class="form-select form-select-lg bg-dark text-white border-secondary">
-                            <option value="udp">UDP</option>
-                            <option value="tcp">TCP</option>
+                        <label class="form-label text-info" id="link-label">2. Вставьте ссылку на встречу:</label>
+                        <input type="text" id="roomLink" class="form-control bg-dark text-white border-secondary" placeholder="Вставьте ссылку или ID...">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label text-info">3. Выберите туннель/транспорт:</label>
+                        <select id="tunnelSelect" class="form-select bg-dark text-white">
+                            <option value="videochannel">Videochannel (FFmpeg - Стабильный)</option>
+                            <option value="vp8channel">VP8Channel (Встроенный)</option>
                         </select>
                     </div>
-                </div>
 
-                <div id="form-standard" class="dynamic-form d-none">
-                    <div class="mb-4">
-                        <label class="form-label text-muted">ID Комнаты</label>
-                        <input type="text" id="std-room" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="Например: nlg7d4">
+                    <button class="btn btn-success btn-lg w-100" onclick="launchBot()">💾 Сохранить и Запустить службу</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-logs" class="view">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header bg-secondary text-white d-flex justify-content-between">
+                    <h5 class="mb-0">Системные логи (OlcRTC)</h5>
+                    <div>
+                        <button class="btn btn-sm btn-light me-2" onclick="openLogs()">🔄 Обновить</button>
+                        <button class="btn btn-sm btn-dark" onclick="showView('view-menu')">✖ Назад</button>
                     </div>
-                    <div class="mb-4">
-                        <label class="form-label text-muted">Транспорт</label>
-                        <select id="std-tunnel" class="form-select form-select-lg bg-dark text-white border-secondary">
-                            <option value="videochannel">FFmpeg (Videochannel)</option>
-                            <option value="vp8channel">Стандартный (VP8)</option>
-                        </select>
-                    </div>
                 </div>
-
-                <div class="d-flex justify-content-between mt-5">
-                    <button class="btn btn-outline-secondary px-4" onclick="showStep(1)">← Назад</button>
-                    <button class="btn btn-primary px-5 btn-lg" onclick="startLaunch()">Далее →</button>
+                <div class="card-body">
+                    <pre id="log-output" class="logs-window">Загрузка логов...</pre>
                 </div>
             </div>
         </div>
 
-        <div id="step-3" class="step glass-card p-5">
-            <h3 class="mb-4 text-white" id="launch-title">Подключение...</h3>
-            <div class="progress mb-4 bg-dark" style="height: 8px; border-radius: 4px;">
-                <div id="launch-progress" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
-            </div>
-            <div class="terminal shadow-inner mb-4" id="terminal-output">
-                > Инициализация подсистемы...<br>
-            </div>
-            <button id="btn-dashboard" class="btn btn-success btn-lg w-100 d-none shadow" onclick="showStep(4)">Перейти к результату ✨</button>
-        </div>
-
-        <div id="step-4" class="step glass-card p-5">
-            <div class="text-center mb-5">
-                <div class="d-inline-block bg-success bg-opacity-25 p-3 rounded-circle mb-3">
-                    <span style="font-size: 2rem;">✅</span>
-                </div>
-                <h3 class="text-white">Готово! Успешное подключение.</h3>
-                <p class="text-muted" id="dash-info">Платформа: - | Туннель: -</p>
-            </div>
-            
-            <div class="text-start p-4 bg-dark rounded-3 border border-secondary mb-4 shadow-sm">
-                <label class="form-label text-muted mb-2">Ваша ссылка для доступа:</label>
-                <div class="input-group">
-                    <input type="text" id="result-link" class="form-control bg-dark text-info border-secondary fs-5" readonly value="Генерация...">
-                    <button class="btn btn-outline-secondary" onclick="copyLink()">📋 Копировать</button>
-                </div>
-            </div>
-
-            <hr class="border-secondary my-4">
-            <div class="d-flex gap-3">
-                <button class="btn btn-danger w-50" onclick="stopBot()">■ Остановить процесс</button>
-                <button class="btn btn-outline-light w-50" onclick="showStep(1)">+ Новая сессия</button>
-            </div>
-        </div>
     </div>
 
     <script>
-        let currentPlatform = '';
-        let currentConfig = {};
-
-        // Загрузка истории при старте
-        function loadHistory() {
-            const history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
-            const container = document.getElementById('history-container');
-            const list = document.getElementById('history-list');
-            
-            if (history.length > 0) {
-                container.classList.remove('d-none');
-                list.innerHTML = '';
-                history.forEach((item, index) => {
-                    list.innerHTML += `
-                        <div class="history-item d-flex justify-content-between align-items-center p-3 mb-2 bg-dark rounded" onclick='loadConfig(${index})'>
-                            <div>
-                                <strong class="text-white">${item.platform}</strong>
-                                <span class="text-muted ms-2 fs-6">${item.linkOrRoom}</span>
-                            </div>
-                            <span class="badge bg-secondary">▶ Запуск</span>
-                        </div>
-                    `;
-                });
-            }
+        function showView(id) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            updateForm();
         }
 
-        function loadConfig(index) {
-            const history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
-            const conf = history[index];
-            currentPlatform = conf.platform;
-            
-            if (conf.platform === 'Яндекс Телемост') {
-                document.getElementById('ya-link').value = conf.linkOrRoom;
-                document.getElementById('ya-conn').value = conf.connectionType;
-                document.getElementById('ya-tunnel').value = conf.tunnel;
+        // Обновление формы при выборе платформы (Показ помощника Яндекса)
+        function updateForm() {
+            let p = document.getElementById('platformSelect').value;
+            let helper = document.getElementById('yandex-helper');
+            let label = document.getElementById('link-label');
+            let input = document.getElementById('roomLink');
+
+            if(p === 'Яндекс Телемост') {
+                helper.style.display = 'block';
+                label.innerText = '2. Вставьте скопированную ссылку сюда:';
+                input.placeholder = 'https://telemost.yandex.ru/j/...';
             } else {
-                document.getElementById('std-room').value = conf.linkOrRoom;
-                document.getElementById('std-tunnel').value = conf.tunnel;
+                helper.style.display = 'none';
+                label.innerText = '2. Введите ID комнаты:';
+                input.placeholder = 'Например: nlg7d4';
             }
-            selectPlatform(conf.platform);
         }
 
-        function showStep(stepNum) {
-            document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
-            document.getElementById('step-' + stepNum).classList.add('active');
-            if (stepNum === 1) loadHistory();
+        async function checkStatus() {
+            try {
+                let res = await fetch('/api/status');
+                let data = await res.json();
+                let b = document.getElementById('status-badge');
+                if(data.active) {
+                    b.className = 'badge bg-success fs-6'; b.innerText = 'Служба Запущена (Online)';
+                } else {
+                    b.className = 'badge bg-danger fs-6'; b.innerText = 'Служба Остановлена (Offline)';
+                }
+            } catch(e) {}
         }
 
-        function selectPlatform(platform) {
-            currentPlatform = platform;
-            document.getElementById('selected-platform-name').innerText = platform;
-            
-            document.querySelectorAll('.dynamic-form').forEach(el => el.classList.add('d-none'));
-            if (platform === 'Яндекс Телемост') {
-                document.getElementById('form-yandex').classList.remove('d-none');
-            } else {
-                document.getElementById('form-standard').classList.remove('d-none');
+        async function apiAction(action) {
+            await fetch('/api/' + action);
+            checkStatus();
+            if(action === 'stop') alert('Служба остановлена!');
+        }
+
+        async function deleteService() {
+            if(confirm("Вы уверены? Это остановит бота и удалит файл службы.")) {
+                await fetch('/api/delete');
+                checkStatus();
+                alert('Служба успешно удалена!');
             }
-            showStep(2);
         }
 
-        function writeTerminal(text, delay) {
-            return new Promise(resolve => {
-                setTimeout(() => {
-                    document.getElementById('terminal-output').innerHTML += '> ' + text + '<br>';
-                    document.getElementById('terminal-output').scrollTop = document.getElementById('terminal-output').scrollHeight;
-                    resolve();
-                }, delay);
-            });
-        }
-
-        async function startLaunch() {
-            showStep(3);
+        async function launchBot() {
+            let config = {
+                platform: document.getElementById('platformSelect').value,
+                roomLink: document.getElementById('roomLink').value,
+                tunnel: document.getElementById('tunnelSelect').value
+            };
             
-            // Собираем данные в зависимости от формы
-            if (currentPlatform === 'Яндекс Телемост') {
-                currentConfig = {
-                    platform: currentPlatform,
-                    linkOrRoom: document.getElementById('ya-link').value || 'https://telemost.yandex.ru/',
-                    connectionType: document.getElementById('ya-conn').value,
-                    tunnel: document.getElementById('ya-tunnel').value
-                };
-            } else {
-                currentConfig = {
-                    platform: currentPlatform,
-                    linkOrRoom: document.getElementById('std-room').value || 'default',
-                    connectionType: 'direct',
-                    tunnel: document.getElementById('std-tunnel').value
-                };
-            }
+            if(!config.roomLink) { alert('Пожалуйста, введите ссылку или ID комнаты!'); return; }
 
-            // Сохраняем в историю (оставляем только 3 последних)
-            let history = JSON.parse(localStorage.getItem('olcrtc_history') || '[]');
-            history.unshift(currentConfig);
-            if(history.length > 3) history.pop();
-            localStorage.setItem('olcrtc_history', JSON.stringify(history));
-
-            // Анимация интерфейса
-            document.getElementById('btn-dashboard').classList.add('d-none');
-            document.getElementById('terminal-output').innerHTML = '> Инициализация параметров для ' + currentPlatform + '...<br>';
-            document.getElementById('launch-progress').style.width = '10%';
-            document.getElementById('launch-progress').className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
-
-            await writeTerminal('Настройка типа соединения: ' + currentConfig.connectionType + '...', 800);
-            document.getElementById('launch-progress').style.width = '40%';
-            
-            // Отправляем API запрос на бэкенд
+            // Запускаем
             await fetch('/api/launch', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(currentConfig)
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
             });
 
-            await writeTerminal('Открытие порталов WebRTC (' + currentConfig.tunnel + ')...', 1000);
-            document.getElementById('launch-progress').style.width = '70%';
-            await writeTerminal('Подключение к медиа-серверу...', 1200);
-            
-            document.getElementById('launch-progress').style.width = '100%';
-            document.getElementById('launch-progress').classList.remove('bg-primary');
-            document.getElementById('launch-progress').classList.add('bg-success');
-            await writeTerminal('<span style="color: #000; background: #00ff00; padding: 2px 6px; border-radius: 3px;">ЧПОК! Соединение установлено.</span>', 600);
-            
-            document.getElementById('launch-title').innerText = "Магия совершена!";
-            document.getElementById('btn-dashboard').classList.remove('d-none');
-
-            // Подготовка финального экрана
-            document.getElementById('dash-info').innerText = `Платформа: ${currentPlatform} | Туннель: ${currentConfig.tunnel.toUpperCase()}`;
-            
-            // Генерируем красивую ссылку
-            const serverIP = window.location.hostname;
-            const uniqueId = Math.random().toString(36).substring(2, 8);
-            document.getElementById('result-link').value = `http://${serverIP}:8080/join/${uniqueId}`;
+            // Возвращаемся в меню и сразу открываем логи, чтобы видеть процесс
+            alert('Конфигурация сохранена! Бот запускается.');
+            checkStatus();
+            openLogs();
         }
 
-        async function stopBot() {
-            await fetch('/api/stop');
-            alert('Процесс успешно остановлен.');
-            showStep(1);
+        async function openLogs() {
+            showView('view-logs');
+            let res = await fetch('/api/logs');
+            let text = await res.text();
+            let logWindow = document.getElementById('log-output');
+            logWindow.innerText = text || "Логи пусты. Служба еще не запускалась.";
+            logWindow.scrollTop = logWindow.scrollHeight; // Прокрутка вниз
         }
 
-        function copyLink() {
-            const link = document.getElementById('result-link');
-            link.select();
-            document.execCommand('copy');
-            alert('Ссылка скопирована!');
-        }
-
-        // Запуск
-        loadHistory();
+        setInterval(checkStatus, 3000);
+        checkStatus();
     </script>
 </body>
 </html>
 EOF
 
-echo -e "\e[34m[5/6] Компиляция Studio...\e[0m"
+echo -e "\e[34m[5/6] Компиляция панели...\e[0m"
 go build -o olc-ui-bin main.go
 
-echo -e "\e[34m[6/6] Перезапуск службы...\e[0m"
+echo -e "\e[34m[6/6] Перезапуск...\e[0m"
 systemctl daemon-reload
 systemctl restart olc-ui
 
 IP=$(curl -s ifconfig.me)
 echo -e "\e[32m=======================================================\e[0m"
-echo -e "\e[32m✨ OLC-RTC STUDIO УСПЕШНО ОБНОВЛЕНА! ✨\e[0m"
-echo -e "🌐 Открой панель (не забудь Ctrl+F5 для сброса кэша):"
+echo -e "✅ ГРАФИЧЕСКИЙ СКРИПТ УСТАНОВЛЕН!"
+echo -e "🌐 Открой панель:"
 echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
 echo -e "\e[32m=======================================================\e[0m"
