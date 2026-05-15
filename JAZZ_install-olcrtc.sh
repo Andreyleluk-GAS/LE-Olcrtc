@@ -55,345 +55,65 @@ silent_wipe() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Показать текущий статус и реквизиты (Опция 4)
+# Проверка обновлений: сравнение локальной и удалённой версий
+# Возвращает: "update" - нужно обновление, "current" - актуально
 # ─────────────────────────────────────────────────────────────
-show_status() {
-    print_logo
-    echo -e "${MAGENTA}=================================================${NC}"
-    echo -e "${CYAN}   Статус OlcRTC и реквизиты подключения         ${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-
-    local CFG="/opt/olcrtc/.env"
-
-    # Проверяем установлен ли сервис
-    if [ ! -f /etc/systemd/system/olcrtc.service ]; then
-        echo -e "${RED}[✖] OlcRTC не установлен.${NC}"
-        echo -e "    Запустите установку через пункт 1 меню."
-        echo
-        read -p "Нажмите Enter для возврата в меню..."
-        return
-    fi
-
-    # Проверяем активен ли сервис
-    if ! systemctl is-active --quiet olcrtc; then
-        echo -e "${RED}[✖] Сервис OlcRTC установлен, но НЕ ЗАПУЩЕН.${NC}"
-        echo -e "${YELLOW}    Статус: $(systemctl is-active olcrtc)${NC}"
-        echo -e "    Для диагностики: journalctl -u olcrtc -n 30"
-        echo
-        read -p "Нажмите Enter для возврата в меню..."
-        return
-    fi
-
-    echo -e "${GREEN}[✔] Сервис OlcRTC активен и работает.${NC}\n"
-
-    # Читаем сохранённые реквизиты
-    if [ ! -f "$CFG" ]; then
-        echo -e "${YELLOW}⚠ Файл реквизитов не найден: ${CFG}${NC}"
-        echo -e "  (Установка выполнена старой версией скрипта без сохранения реквизитов)"
-        echo -e "  Перезапустите установку для сохранения реквизитов."
-        echo
-        read -p "Нажмите Enter для возврата в меню..."
-        return
-    fi
-
-    # shellcheck source=/dev/null
-    source "$CFG"
-
-    echo -e "${MAGENTA}=================================================${NC}"
-    echo -e "${GREEN} РЕКВИЗИТЫ ТЕКУЩЕЙ УСТАНОВКИ${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-    echo -e "Провайдер:\t${YELLOW}${S_PROVIDER}${NC}"
-    echo -e "Транспорт:\t${YELLOW}${S_TRANSPORT}${NC}"
-    echo -e "ID звонка:\t${YELLOW}${S_ROOM_ID}${NC}"
-    echo -e "Ключ:\t\t${YELLOW}${S_ENC_KEY}${NC}"
-    echo -e "ID клиента:\t${YELLOW}${S_CLIENT_ID}${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-    echo -e "URI для быстрого импорта в Olcbox:"
-    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$OlcRTC_Server${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-
-    # Если Jazz — показываем ссылку на встречу
-    if [[ "${S_PROVIDER}" == "jazz" && -n "${S_ROOM_ID}" ]]; then
-        echo -e "Ссылка для участников (SaluteJazz):"
-        echo -e "  ${YELLOW}https://salutejazz.ru/calls/${S_ROOM_ID}${NC}"
-        echo -e "  Код конференции: ${YELLOW}${S_ROOM_ID}@salutejazz.ru${NC}"
-        if [ -n "${S_BOT_NAME}" ]; then
-            echo -e "  Имя бота: ${YELLOW}${S_BOT_NAME}${NC}"
-        fi
-    elif [[ "${S_PROVIDER}" == "wbstream" && -n "${S_ROOM_ID}" ]]; then
-        echo -e "Ссылка для участников (WB Stream):"
-        echo -e "  ${YELLOW}https://stream.wb.ru/room/${S_ROOM_ID}${NC}"
-    fi
-    echo -e "${MAGENTA}=================================================${NC}"
-    echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
-    echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-
-    read -p "Нажмите Enter для возврата в меню..."
-}
-
-# Проверка на права root
-if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}Ошибка: Пожалуйста, запустите скрипт с правами root (sudo ./install-olcrtc.sh)${NC}"
-  exit 1
-fi
-
-# Отключаем интерактивные окна для apt-get на весь сеанс
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-
-# Функция отрисовки логотипа
-print_logo() {
-    clear
-    echo -e "${CYAN}"
-    cat << "EOF"
-   ____  _       _____  _______ _____ 
-  / __ \| |     |  __ \|__   __/ ____|
- | |  | | | ___ | |__) |  | | | |    
- | |  | | |/ __||  _  /   | | | |    
- | |__| | | (__ | | \ \   | | | |____
-  \____/|_|\___||_|  \_\  |_|  \_____|
-                                       
-EOF
-    echo -e "${YELLOW}                                     Версия: ${SCRIPT_VERSION}${NC}"
-    echo -e "${NC}"
-}
-
-# Функция парсинга URL для Jazz
-# Извлекает ROOM_ID и S_ROOM_PASSWORD из ссылки типа https://salutejazz.ru/calls/nlg7d4?psw=OAdbHAc...
-parse_jazz_url() {
-    local input_url="$1"
+check_for_updates() {
+    local BINARY="/opt/olcrtc/olcrtc"
+    local VERSION_FILE="/opt/olcrtc/.local_version"
+    local REPO_URL="https://github.com/openlibrecommunity/olcrtc.git"
     
-    # Если URL содержит ?psw=, извлекаем пароль
-    if [[ "$input_url" == *"?psw="* ]]; then
-        S_ROOM_PASSWORD="${input_url##*?psw=}"
-        # Убираем всё после & или другие query параметры
-        S_ROOM_PASSWORD="${S_ROOM_PASSWORD%%&*}"
+    # Если бинарника нет - это чистая установка
+    if [ ! -f "$BINARY" ]; then
+        echo "update"
+        return
+    fi
+    
+    # Если файла версии нет - пересобираем (старая установка)
+    if [ ! -f "$VERSION_FILE" ]; then
+        echo "update"
+        return
+    fi
+    
+    # Получаем удалённую версию
+    echo -e "${CYAN}Проверяем обновления на GitHub...${NC}"
+    local REMOTE_VERSION
+    REMOTE_VERSION=$(git ls-remote "$REPO_URL" HEAD 2>/dev/null | awk '{ print $1}')
+    
+    if [ -z "$REMOTE_VERSION" ]; then
+        # Не удалось получить удалённую версию - пропускаем обновление
+        echo -e "${YELLOW}⚠ Не удалось проверить обновления. Пропускаем сборку.${NC}"
+        echo "current"
+        return
+    fi
+    
+    local LOCAL_VERSION
+    LOCAL_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
+    
+    if [ "$LOCAL_VERSION" != "$REMOTE_VERSION" ]; then
+        echo "update"
     else
-        S_ROOM_PASSWORD=""
+        echo "current"
     fi
-    
-    # Извлекаем ROOM_ID: убираем всё до последнего / и всё после ?
-    local temp="${input_url%%\?*}"  # Убираем query параметры
-    temp="${temp##*/}"              # Убираем всё до последнего /
-    
-    echo "$temp"
 }
 
-# Функция генерации случайного русского имени
-generate_bot_name() {
-    local idx=$((RANDOM % ${#RU_NAMES[@]}))
-    echo "${RU_NAMES[idx]}"
-}
-
-# Функция установки
-install_olcrtc() {
-    # ── Проверка предыдущей установки ────────────────
-    if [ -f /etc/systemd/system/olcrtc.service ] || [ -d /opt/olcrtc ]; then
-        print_logo
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "${YELLOW}   ⚠  Обнаружена предыдущая установка OlcRTC!   ${NC}"
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "${RED}Продолжение без очистки может вызвать конфликты файлов и ошибки.${NC}"
-        echo
-        # Сбрасываем буфер stdin (может содержать Enter от главного меню)
-        read -t 0.1 -n 10000 discard_buffer 2>/dev/null || true
-        read -p "Удалить существующую установку и начать заново? (y/n): " wipe_choice
-        if [[ "$wipe_choice" == "y" || "$wipe_choice" == "Y" || "$wipe_choice" == "н" || "$wipe_choice" == "Н" || "$wipe_choice" == "д" || "$wipe_choice" == "Д" ]]; then
-            echo -e "${CYAN}Выполняю очистку...${NC}"
-            silent_wipe
-            echo -e "${GREEN}Очистка завершена. Начинаем чистую установку.${NC}"
-            sleep 1
-        else
-            echo -e "${YELLOW}Установка отменена. Возврат в меню.${NC}"
-            sleep 1
-            return
-        fi
-    fi
-    while true; do
-        print_logo
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "${GREEN}   Интерактивная установка OlcRTC (Сервер)       ${NC}"
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "${YELLOW}ВНИМАНИЕ: Перед продолжением вы должны ВРУЧНУЮ создать комнату на сайте провайдера и скопировать ссылку-приглашение!${NC}\n"
-
-        # --- 1. ВЫБОР ПРОВАЙДЕРА ---
-        echo -e "${CYAN}Шаг 1: Выберите провайдера:${NC}"
-        echo -e " 1) ${YELLOW}telemost (Yandex)${NC}       - стабильно работает"
-        echo -e " 2) ${MAGENTA}wbstream (Wildberries)${NC} - стабильно работает"
-        echo -e " 3) ${CYAN}jazz     (Sber SaluteJazz)${NC} - работает нестабильно"
-        echo -e " 0) Назад в главное меню"
-        read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
-
-        [[ "$prov_choice" == "0" ]] && return
-
-        case $prov_choice in
-            1) PROVIDER="telemost" ;;
-            2) PROVIDER="wbstream" ;;
-            3) PROVIDER="jazz" ;;
-            *) PROVIDER="telemost" ;;
-        esac
-
-        # --- Генерация случайного русского имени для бота (только для Jazz) ---
-        BOT_NAME=""
-        if [[ "$PROVIDER" == "jazz" ]]; then
-            BOT_NAME=$(generate_bot_name)
-            echo -e "${GREEN}  ➤ Имя бота для конференции: ${YELLOW}${BOT_NAME}${NC}"
-        fi
-
-        # --- 2. ВЫБОР ТРАНСПОРТА ---
-        # Матрица совместимости: + работает | * работает но нежелательно | - не поддерживается
-        echo -e "\n${CYAN}Шаг 2: Выберите тип транспорта:${NC}"
-
-        if [[ "$PROVIDER" == "wbstream" ]]; then
-            echo -e " 1) datachannel  ${GREEN}[рекомендуется — максимальная скорость]${NC}"
-            echo -e " 2) vp8channel   (высокая скорость)"
-            echo -e " 3) seichannel   (средняя скорость)"
-            echo -e " 4) videochannel (низкая скорость)"
-            echo -e " 0) Назад в главное меню"
-            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
-            [[ "$trans_choice" == "0" ]] && return
-            case $trans_choice in
-                2) TRANSPORT="vp8channel" ;;
-                3) TRANSPORT="seichannel" ;;
-                4) TRANSPORT="videochannel" ;;
-                *) TRANSPORT="datachannel" ;;
-            esac
-
-        elif [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "${YELLOW}⚠ Для Jazz провайдера:${NC}"
-            echo -e "  ${RED}datachannel — Jazz моментально банит IP за этот паттерн трафика!${NC}"
-            echo -e "  ${GREEN}Рекомендуется vp8channel или seichannel.${NC}\n"
-            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
-            echo -e " 2) seichannel   (средняя скорость)"
-            echo -e " 3) videochannel (низкая скорость)"
-            echo -e " 4) datachannel  ${RED}[⚠ Jazz забанит IP — не рекомендуется]${NC}"
-            echo -e " 0) Назад в главное меню"
-            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
-            [[ "$trans_choice" == "0" ]] && return
-            case $trans_choice in
-                2) TRANSPORT="seichannel" ;;
-                3) TRANSPORT="videochannel" ;;
-                4) TRANSPORT="datachannel" ;;
-                *) TRANSPORT="vp8channel" ;;
-            esac
-
-        elif [[ "$PROVIDER" == "telemost" ]]; then
-            echo -e "${YELLOW}⚠ Для Telemost провайдера:${NC}"
-            echo -e "  ${RED}datachannel и seichannel — не поддерживаются Telemost!${NC}\n"
-            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
-            echo -e " 2) videochannel (низкая скорость)"
-            echo -e " 0) Назад в главное меню"
-            read -p "Ваш выбор (0-2) [по умолчанию 1]: " trans_choice
-            [[ "$trans_choice" == "0" ]] && return
-            case $trans_choice in
-                2) TRANSPORT="videochannel" ;;
-                *) TRANSPORT="vp8channel" ;;
-            esac
-        fi
-
-        # --- 3. ВЫБОР ID ЗВОНКА ---
-        echo -e "\n${CYAN}Шаг 3: Настройка ID звонка (комнаты):${NC}"
-        echo -e "${YELLOW}💡 Как получить ID звонка?${NC}"
-        echo -e "ID звонка — это идентификатор конференции, внутри которой прячется трафик."
-        echo -e "Используйте реальную комнату для лучшей маскировки.\n"
-
-        echo -e "Создайте комнату и скопируйте ID (код в конце ссылки) или вставьте ссылку целиком:"
-        echo -e " ▶ ${MAGENTA}WB Stream:${NC}       https://stream.wb.ru/room/ ${YELLOW}[ваш_id]${NC}"
-        echo -e " ▶ ${YELLOW}Yandex Telemost:${NC} https://telemost.yandex.ru/j/ ${YELLOW}[ваш_id]${NC}"
-        echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/ ${YELLOW}[ваш_id]${NC}\n"
-
-        read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
-        
-        # Для Jazz используем улучшенный парсинг URL
-        if [[ "$PROVIDER" == "jazz" ]]; then
-            S_ROOM_PASSWORD=""
-            ROOM_ID=$(parse_jazz_url "$ROOM_ID")
-            
-            # Если пароль не был извлечён из URL, спрашиваем отдельно
-            if [ -z "$S_ROOM_PASSWORD" ]; then
-                echo -e "${CYAN}Пароль комнаты (если есть):${NC}"
-                read -p "Введите пароль из ?psw=... (оставьте пустым если пароля нет): " S_ROOM_PASSWORD
-                if [ -n "$S_ROOM_PASSWORD" ]; then
-                    echo -e "${GREEN}Пароль комнаты сохранён: ${S_ROOM_PASSWORD}${NC}"
-                else
-                    echo -e "${YELLOW}Пароль не указан — комната будет открытой.${NC}"
-                fi
-            else
-                echo -e "${GREEN}Пароль комнаты извлечён из ссылки: ${S_ROOM_PASSWORD}${NC}"
-            fi
-        else
-            # Для остальных провайдеров - стандартный парсинг
-            ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
-        fi
-        
-        while [ -z "$ROOM_ID" ]; do
-            echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
-            read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_ID
-            if [[ "$PROVIDER" == "jazz" ]]; then
-                S_ROOM_PASSWORD=""
-                ROOM_ID=$(parse_jazz_url "$ROOM_ID")
-                if [ -z "$S_ROOM_PASSWORD" ]; then
-                    read -p "Введите пароль из ?psw=...: " S_ROOM_PASSWORD
-                fi
-            else
-                ROOM_ID="${ROOM_ID##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
-            fi
-        done
-        
-        echo -e "${GREEN}Чистый ID звонка: ${ROOM_ID}${NC}"
-
-        # --- 4. ВЫБОР КЛЮЧА ШИФРОВАНИЯ ---
-        echo -e "\n${CYAN}Шаг 4: Настройка ключа шифрования:${NC}"
-        echo -e " 1) Сгенерировать надёжный ключ автоматически (рекомендуется)"
-        echo -e " 2) Ввести свой ключ вручную"
-        echo -e " 0) Назад в главное меню"
-        read -p "Ваш выбор (0-2) [по умолчанию 1]: " key_choice
-
-        [[ "$key_choice" == "0" ]] && return
-
-        if [[ "$key_choice" == "2" ]]; then
-            read -p "Введите ключ шифрования (hex, 64 символа): " ENC_KEY
-            while [ -z "$ENC_KEY" ]; do
-                echo -e "${RED}Ошибка: Ключ не может быть пустым!${NC}"
-                read -p "Введите ключ шифрования: " ENC_KEY
-            done
-        else
-            ENC_KEY=$(openssl rand -hex 32)
-            echo -e "${YELLOW}Сгенерирован ключ: $ENC_KEY${NC}"
-        fi
-
-        # --- 5. ВЫБОР ID КЛИЕНТА ---
-        echo -e "\n${CYAN}Шаг 5: Настройка ID клиента:${NC}"
-        echo -e " 1) Сгенерировать автоматически (рекомендуется)"
-        echo -e " 2) Ввести вручную"
-        echo -e " 0) Назад в главное меню"
-        read -p "Ваш выбор (0-2) [по умолчанию 1]: " client_choice
-
-        [[ "$client_choice" == "0" ]] && return
-
-        if [[ "$client_choice" == "2" ]]; then
-            read -p "Введите ID клиента: " CLIENT_ID
-            while [ -z "$CLIENT_ID" ]; do
-                echo -e "${RED}Ошибка: ID клиента не может быть пустым!${NC}"
-                read -p "Введите ID клиента: " CLIENT_ID
-            done
-        else
-            CLIENT_ID=$(openssl rand -hex 4)
-            echo -e "${YELLOW}Сгенерирован ID клиента: $CLIENT_ID${NC}"
-        fi
-
-        # После всех шагов — возврат в цикл невозможен
-        break
-    done
-
-    echo -e "\n${MAGENTA}=================================================${NC}"
-    echo -e "${YELLOW}Конфигурация завершена. Начинаем установку...${NC}"
-    echo -e "${MAGENTA}=================================================${NC}"
-
+# ─────────────────────────────────────────────────────────────
+# Полная сборка бинарника (Сценарий A: обновление или новая установка)
+# ─────────────────────────────────────────────────────────────
+build_olcrtc_binary() {
+    local PROVIDER="$1"
+    local S_ROOM_PASSWORD="$2"
+    local BOT_NAME="$3"
+    
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}[!] Найдено обновление / чистая установка.${NC}"
+    echo -e "${YELLOW}    Начинаем сборку бинарника...${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo
+    
     # Останавливаем при ошибках
     set -e
-
+    
     # ─────────────────────────────────────────────────────────────────────────
     # [1/6] Полная очистка системы от старых следов Go
     # ─────────────────────────────────────────────────────────────────────────
@@ -698,17 +418,404 @@ install_olcrtc() {
     fi
     set -e
 
-    # [9/9] Настройка Systemd
-    echo -e "\n${CYAN}[9/9] Настройка системной службы...${NC}"
-    # Останавливаем службу перед заменой бинарника (иначе: "Text file busy")
-    systemctl stop olcrtc 2>/dev/null || true
+    # [9/9] Установка бинарника
+    echo -e "\n${CYAN}[9/9] Установка собранного бинарника...${NC}"
     mkdir -p /opt/olcrtc/data
+    systemctl stop olcrtc 2>/dev/null || true
     cp build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc
+    
+    # Сохраняем версию коммита для будущих проверок обновлений
+    cd ~/olcrtc
+    git rev-parse HEAD > /opt/olcrtc/.local_version
+    cd ~
+    
+    # Очищаем исходники после сборки
+    rm -rf ~/olcrtc
+    
+    echo -e "${GREEN}✓ Бинарник установлен, версия сохранена.${NC}"
+    echo -e "${GREEN}✓ Сборка завершена успешно!${NC}"
+}
 
-    # ─────────────────────────────────────────────────────────────
-    # Формирование обязательных флагов транспорта
-    # (требуются для бинарника версии после обновления master branch)
-    # ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Быстрая настройка конфигурации (Сценарий Б: без сборки)
+# ─────────────────────────────────────────────────────────────
+quick_configure() {
+    print_logo
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}[✓] Система установлена и актуальна.${NC}"
+    echo -e "${GREEN}    Пропускаем этап компиляции.${NC}"
+    echo -e "${GREEN}    Переходим к настройке конфигурации.${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    sleep 2
+}
+
+# ─────────────────────────────────────────────────────────────
+# Показать текущий статус и реквизиты (Опция 4)
+# ─────────────────────────────────────────────────────────────
+show_status() {
+    print_logo
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${CYAN}   Статус OlcRTC и реквизиты подключения         ${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    local CFG="/opt/olcrtc/.env"
+
+    # Проверяем установлен ли сервис
+    if [ ! -f /etc/systemd/system/olcrtc.service ]; then
+        echo -e "${RED}[✖] OlcRTC не установлен.${NC}"
+        echo -e "    Запустите установку через пункт 1 меню."
+        echo
+        read -p "Нажмите Enter для возврата в меню..."
+        return
+    fi
+
+    # Проверяем активен ли сервис
+    if ! systemctl is-active --quiet olcrtc; then
+        echo -e "${RED}[✖] Сервис OlcRTC установлен, но НЕ ЗАПУЩЕН.${NC}"
+        echo -e "${YELLOW}    Статус: $(systemctl is-active olcrtc)${NC}"
+        echo -e "    Для диагностики: journalctl -u olcrtc -n 30"
+        echo
+        read -p "Нажмите Enter для возврата в меню..."
+        return
+    fi
+
+    echo -e "${GREEN}[✔] Сервис OlcRTC активен и работает.${NC}\n"
+
+    # Читаем сохранённые реквизиты
+    if [ ! -f "$CFG" ]; then
+        echo -e "${YELLOW}⚠ Файл реквизитов не найден: ${CFG}${NC}"
+        echo -e "  (Установка выполнена старой версией скрипта без сохранения реквизитов)"
+        echo -e "  Перезапустите установку для сохранения реквизитов."
+        echo
+        read -p "Нажмите Enter для возврата в меню..."
+        return
+    fi
+
+    # shellcheck source=/dev/null
+    source "$CFG"
+
+    # Пытаемся извлечь полную ссылку с паролем из systemd сервиса
+    SAVED_LINK=""
+    if [ -f /etc/systemd/system/olcrtc.service ]; then
+        SAVED_LINK=$(grep -oP '^# FullLink=\K.*' /etc/systemd/system/olcrtc.service 2>/dev/null || echo "")
+    fi
+
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN} РЕКВИЗИТЫ ТЕКУЩЕЙ УСТАНОВКИ${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "Провайдер:\t${YELLOW}${S_PROVIDER}${NC}"
+    echo -e "Транспорт:\t${YELLOW}${S_TRANSPORT}${NC}"
+    echo -e "ID звонка:\t${YELLOW}${S_ROOM_ID}${NC}"
+    echo -e "Ключ:\t\t${YELLOW}${S_ENC_KEY}${NC}"
+    echo -e "ID клиента:\t${YELLOW}${S_CLIENT_ID}${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "URI для быстрого импорта в Olcbox:"
+    echo -e "${YELLOW}olcrtc://${S_PROVIDER}?${S_TRANSPORT}@${S_ROOM_ID}#${S_ENC_KEY}%${S_CLIENT_ID}\$OlcRTC_Server${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    # Показываем полную ссылку с паролем (восстановленную из systemd сервиса)
+    if [ -n "$SAVED_LINK" ]; then
+        if [[ "${S_PROVIDER}" == "jazz" ]]; then
+            echo -e "Ссылка для участников (SaluteJazz):"
+            echo -e "  ${YELLOW}${SAVED_LINK}${NC}"
+            echo -e "  Код конференции: ${YELLOW}${S_ROOM_ID}@salutejazz.ru${NC}"
+        elif [[ "${S_PROVIDER}" == "wbstream" ]]; then
+            echo -e "Ссылка для участников (WB Stream):"
+            echo -e "  ${YELLOW}${SAVED_LINK}${NC}"
+        elif [[ "${S_PROVIDER}" == "telemost" ]]; then
+            echo -e "Ссылка для участников (Yandex Telemost):"
+            echo -e "  ${YELLOW}${SAVED_LINK}${NC}"
+        fi
+        if [ -n "${S_BOT_NAME}" ]; then
+            echo -e "  Имя бота: ${YELLOW}${S_BOT_NAME}${NC}"
+        fi
+    else
+        # Fallback — показываем обрезанную ссылку (для старых установок)
+        if [[ "${S_PROVIDER}" == "jazz" && -n "${S_ROOM_ID}" ]]; then
+            echo -e "Ссылка для участников (SaluteJazz):"
+            echo -e "  ${YELLOW}https://salutejazz.ru/calls/${S_ROOM_ID}${NC}"
+            echo -e "  Код конференции: ${YELLOW}${S_ROOM_ID}@salutejazz.ru${NC}"
+            if [ -n "${S_BOT_NAME}" ]; then
+                echo -e "  Имя бота: ${YELLOW}${S_BOT_NAME}${NC}"
+            fi
+        elif [[ "${S_PROVIDER}" == "wbstream" && -n "${S_ROOM_ID}" ]]; then
+            echo -e "Ссылка для участников (WB Stream):"
+            echo -e "  ${YELLOW}https://stream.wb.ru/room/${S_ROOM_ID}${NC}"
+        fi
+    fi
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
+    echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    read -p "Нажмите Enter для возврата в меню..."
+}
+
+# Проверка на права root
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}Ошибка: Пожалуйста, запустите скрипт с правами root (sudo ./install-olcrtc.sh)${NC}"
+  exit 1
+fi
+
+# Отключаем интерактивные окна для apt-get на весь сеанс
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+# Функция отрисовки логотипа
+print_logo() {
+    clear
+    echo -e "${CYAN}"
+    cat << "EOF"
+   ____  _       _____  _______ _____ 
+  / __ \| |     |  __ \|__   __/ ____|
+ | |  | | | ___ | |__) |  | | | |    
+ | |  | | |/ __||  _  /   | | | |    
+ | |__| | | (__ | | \ \   | | | |____
+  \____/|_|\___||_|  \_\  |_|  \_____|
+                                       
+EOF
+    echo -e "${YELLOW}                                     Версия: ${SCRIPT_VERSION}${NC}"
+    echo -e "${NC}"
+}
+
+# Функция парсинга URL для Jazz
+# Извлекает ROOM_ID и S_ROOM_PASSWORD из ссылки типа https://salutejazz.ru/calls/nlg7d4?psw=OAdbHAc...
+parse_jazz_url() {
+    local input_url="$1"
+    
+    # Если URL содержит ?psw=, извлекаем пароль
+    if [[ "$input_url" == *"?psw="* ]]; then
+        S_ROOM_PASSWORD="${input_url##*?psw=}"
+        # Убираем всё после & или другие query параметры
+        S_ROOM_PASSWORD="${S_ROOM_PASSWORD%%&*}"
+    else
+        S_ROOM_PASSWORD=""
+    fi
+    
+    # Извлекаем ROOM_ID: убираем всё до последнего / и всё после ?
+    local temp="${input_url%%\?*}"  # Убираем query параметры
+    temp="${temp##*/}"              # Убираем всё до последнего /
+    
+    echo "$temp"
+}
+
+# Функция генерации случайного русского имени
+generate_bot_name() {
+    local idx=$((RANDOM % ${#RU_NAMES[@]}))
+    echo "${RU_NAMES[idx]}"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Запрос реквизитов у пользователя (единый для обоих сценариев)
+# Возвращает набор переменных: PROVIDER, TRANSPORT, ROOM_ID, ENC_KEY, CLIENT_ID, BOT_NAME, S_ROOM_PASSWORD, FULL_INVITE_LINK
+# ─────────────────────────────────────────────────────────────
+request_credentials() {
+    while true; do
+        print_logo
+        echo -e "${MAGENTA}=================================================${NC}"
+        echo -e "${GREEN}   Настройка OlcRTC (Сервер)                     ${NC}"
+        echo -e "${MAGENTA}=================================================${NC}"
+        echo -e "${YELLOW}ВНИМАНИЕ: Перед продолжением вы должны ВРУЧНУЮ создать комнату на сайте провайдера и скопировать ссылку-приглашение!${NC}\n"
+
+        # --- 1. ВЫБОР ПРОВАЙДЕРА ---
+        echo -e "${CYAN}Шаг 1: Выберите провайдера:${NC}"
+        echo -e " 1) ${YELLOW}telemost (Yandex)${NC}       - стабильно работает"
+        echo -e " 2) ${MAGENTA}wbstream (Wildberries)${NC} - стабильно работает"
+        echo -e " 3) ${CYAN}jazz     (Sber SaluteJazz)${NC} - работает нестабильно"
+        echo -e " 0) Назад в главное меню"
+        read -p "Ваш выбор (0-3) [по умолчанию 1]: " prov_choice
+
+        [[ "$prov_choice" == "0" ]] && return 1
+
+        case $prov_choice in
+            1) PROVIDER="telemost" ;;
+            2) PROVIDER="wbstream" ;;
+            3) PROVIDER="jazz" ;;
+            *) PROVIDER="telemost" ;;
+        esac
+
+        # --- Генерация случайного русского имени для бота (только для Jazz) ---
+        BOT_NAME=""
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            BOT_NAME=$(generate_bot_name)
+            echo -e "${GREEN}  ➤ Имя бота для конференции: ${YELLOW}${BOT_NAME}${NC}"
+        fi
+
+        # --- 2. ВЫБОР ТРАНСПОРТА ---
+        echo -e "\n${CYAN}Шаг 2: Выберите тип транспорта:${NC}"
+
+        if [[ "$PROVIDER" == "wbstream" ]]; then
+            echo -e " 1) datachannel  ${GREEN}[рекомендуется — максимальная скорость]${NC}"
+            echo -e " 2) vp8channel   (высокая скорость)"
+            echo -e " 3) seichannel   (средняя скорость)"
+            echo -e " 4) videochannel (низкая скорость)"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return 1
+            case $trans_choice in
+                2) TRANSPORT="vp8channel" ;;
+                3) TRANSPORT="seichannel" ;;
+                4) TRANSPORT="videochannel" ;;
+                *) TRANSPORT="datachannel" ;;
+            esac
+
+        elif [[ "$PROVIDER" == "jazz" ]]; then
+            echo -e "${YELLOW}⚠ Для Jazz провайдера:${NC}"
+            echo -e "  ${RED}datachannel — Jazz моментально банит IP за этот паттерн трафика!${NC}"
+            echo -e "  ${GREEN}Рекомендуется vp8channel или seichannel.${NC}\n"
+            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
+            echo -e " 2) seichannel   (средняя скорость)"
+            echo -e " 3) videochannel (низкая скорость)"
+            echo -e " 4) datachannel  ${RED}[⚠ Jazz забанит IP — не рекомендуется]${NC}"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-4) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return 1
+            case $trans_choice in
+                2) TRANSPORT="seichannel" ;;
+                3) TRANSPORT="videochannel" ;;
+                4) TRANSPORT="datachannel" ;;
+                *) TRANSPORT="vp8channel" ;;
+            esac
+
+        elif [[ "$PROVIDER" == "telemost" ]]; then
+            echo -e "${YELLOW}⚠ Для Telemost провайдера:${NC}"
+            echo -e "  ${RED}datachannel и seichannel — не поддерживаются Telemost!${NC}\n"
+            echo -e " 1) vp8channel   ${GREEN}[рекомендуется]${NC} (высокая скорость)"
+            echo -e " 2) videochannel (низкая скорость)"
+            echo -e " 0) Назад в главное меню"
+            read -p "Ваш выбор (0-2) [по умолчанию 1]: " trans_choice
+            [[ "$trans_choice" == "0" ]] && return 1
+            case $trans_choice in
+                2) TRANSPORT="videochannel" ;;
+                *) TRANSPORT="vp8channel" ;;
+            esac
+        fi
+
+        # --- 3. ВЫБОР ID ЗВОНКА ---
+        echo -e "\n${CYAN}Шаг 3: Настройка ID звонка (комнаты):${NC}"
+        echo -e "${YELLOW}💡 Как получить ID звонка?${NC}"
+        echo -e "ID звонка — это идентификатор конференции, внутри которой прячется трафик."
+        echo -e "Используйте реальную комнату для лучшей маскировки.\n"
+
+        echo -e "Создайте комнату и скопируйте ID (код в конце ссылки) или вставьте ссылку целиком:"
+        echo -e " ▶ ${MAGENTA}WB Stream:${NC}       https://stream.wb.ru/room/ ${YELLOW}[ваш_id]${NC}"
+        echo -e " ▶ ${YELLOW}Yandex Telemost:${NC} https://telemost.yandex.ru/j/ ${YELLOW}[ваш_id]${NC}"
+        echo -e " ▶ ${CYAN}SaluteJazz:${NC}      https://salutejazz.ru/calls/ ${YELLOW}[ваш_id]${NC}\n"
+
+        read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_INPUT
+        
+        # Сохранение оригинальной ссылки с паролем (для вывода пользователю)
+        if [[ "$ROOM_INPUT" == *"http"* ]]; then
+            FULL_INVITE_LINK="$ROOM_INPUT"
+        else
+            case $PROVIDER in
+                telemost) FULL_INVITE_LINK="https://telemost.yandex.ru/j/${ROOM_INPUT}" ;;
+                wbstream) FULL_INVITE_LINK="https://stream.wb.ru/room/${ROOM_INPUT}" ;;
+                jazz)     FULL_INVITE_LINK="https://salutejazz.ru/calls/${ROOM_INPUT}" ;;
+                *)        FULL_INVITE_LINK="$ROOM_INPUT" ;;
+            esac
+        fi
+        
+        # Парсинг чистого ID для запуска бинарника
+        if [[ "$PROVIDER" == "jazz" ]]; then
+            S_ROOM_PASSWORD=""
+            ROOM_ID=$(parse_jazz_url "$ROOM_INPUT")
+            
+            if [ -z "$S_ROOM_PASSWORD" ]; then
+                echo -e "${CYAN}Пароль комнаты (если есть):${NC}"
+                read -p "Введите пароль из ?psw=... (оставьте пустым если пароля нет): " S_ROOM_PASSWORD
+                if [ -n "$S_ROOM_PASSWORD" ]; then
+                    echo -e "${GREEN}Пароль комнаты сохранён: ${S_ROOM_PASSWORD}${NC}"
+                else
+                    echo -e "${YELLOW}Пароль не указан — комната будет открытой.${NC}"
+                fi
+            else
+                echo -e "${GREEN}Пароль комнаты извлечён из ссылки: ${S_ROOM_PASSWORD}${NC}"
+            fi
+        else
+            ROOM_ID="${ROOM_INPUT##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+        fi
+        
+        while [ -z "$ROOM_ID" ]; do
+            echo -e "${RED}Ошибка: ID звонка обязателен!${NC}"
+            read -p "Введите ID звонка или вставьте полную ссылку на комнату: " ROOM_INPUT
+            if [[ "$PROVIDER" == "jazz" ]]; then
+                S_ROOM_PASSWORD=""
+                ROOM_ID=$(parse_jazz_url "$ROOM_INPUT")
+                if [ -z "$S_ROOM_PASSWORD" ]; then
+                    read -p "Введите пароль из ?psw=...: " S_ROOM_PASSWORD
+                fi
+            else
+                ROOM_ID="${ROOM_INPUT##*/}"; ROOM_ID="${ROOM_ID%%\?*}"
+            fi
+        done
+        
+        echo -e "${GREEN}Чистый ID звонка: ${ROOM_ID}${NC}"
+
+        # --- 4. ВЫБОР КЛЮЧА ШИФРОВАНИЯ ---
+        echo -e "\n${CYAN}Шаг 4: Настройка ключа шифрования:${NC}"
+        echo -e " 1) Сгенерировать надёжный ключ автоматически (рекомендуется)"
+        echo -e " 2) Ввести свой ключ вручную"
+        echo -e " 0) Назад в главное меню"
+        read -p "Ваш выбор (0-2) [по умолчанию 1]: " key_choice
+
+        [[ "$key_choice" == "0" ]] && return 1
+
+        if [[ "$key_choice" == "2" ]]; then
+            read -p "Введите ключ шифрования (hex, 64 символа): " ENC_KEY
+            while [ -z "$ENC_KEY" ]; do
+                echo -e "${RED}Ошибка: Ключ не может быть пустым!${NC}"
+                read -p "Введите ключ шифрования: " ENC_KEY
+            done
+        else
+            ENC_KEY=$(openssl rand -hex 32)
+            echo -e "${YELLOW}Сгенерирован ключ: $ENC_KEY${NC}"
+        fi
+
+        # --- 5. ВЫБОР ID КЛИЕНТА ---
+        echo -e "\n${CYAN}Шаг 5: Настройка ID клиента:${NC}"
+        echo -e " 1) Сгенерировать автоматически (рекомендуется)"
+        echo -e " 2) Ввести вручную"
+        echo -e " 0) Назад в главное меню"
+        read -p "Ваш выбор (0-2) [по умолчанию 1]: " client_choice
+
+        [[ "$client_choice" == "0" ]] && return 1
+
+        if [[ "$client_choice" == "2" ]]; then
+            read -p "Введите ID клиента: " CLIENT_ID
+            while [ -z "$CLIENT_ID" ]; do
+                echo -e "${RED}Ошибка: ID клиента не может быть пустым!${NC}"
+                read -p "Введите ID клиента: " CLIENT_ID
+            done
+        else
+            CLIENT_ID=$(openssl rand -hex 4)
+            echo -e "${YELLOW}Сгенерирован ID клиента: $CLIENT_ID${NC}"
+        fi
+
+        # После всех шагов — возврат в цикл невозможен
+        break
+    done
+    
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────
+# Применение конфигурации (systemd + .env)
+# Вызывается после request_credentials() в обоих сценариях
+# ─────────────────────────────────────────────────────────────
+apply_configuration() {
+    local PROVIDER="$1"
+    local TRANSPORT="$2"
+    local ROOM_ID="$3"
+    local ENC_KEY="$4"
+    local CLIENT_ID="$5"
+    local BOT_NAME="$6"
+    local S_ROOM_PASSWORD="$7"
+    local FULL_INVITE_LINK="$8"
+    
+    echo -e "\n${CYAN}Применяем конфигурацию...${NC}"
+    
+    # Формирование флагов транспорта
     case $TRANSPORT in
         vp8channel)    TRANSPORT_FLAGS="-vp8-fps 60 -vp8-batch 64" ;;
         seichannel)    TRANSPORT_FLAGS="-fps 60 -batch 64 -frag 900 -ack-ms 2000" ;;
@@ -720,6 +827,7 @@ install_olcrtc() {
 [Unit]
 Description=OlcRTC Proxy Server
 After=network.target
+# FullLink=$FULL_INVITE_LINK
 
 [Service]
 Type=simple
@@ -733,30 +841,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    # Обновляем конфигурацию systemd для корректного обнаружения ffmpeg и новых путей
     systemctl daemon-reload
-
-    # Открываем UDP-порты для WebRTC (STUN/TURN) — сброс таймаутов
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow 10000:60000/udp >/dev/null 2>&1
-    fi
-    systemctl enable olcrtc
     systemctl restart olcrtc
-
-    set +e
-
-    # Финальная проверка (jazz требует больше времени на handshake)
-    echo -e "\n${YELLOW}Выполняем проверку запуска сервера...${NC}"
-    if [[ "$PROVIDER" == "jazz" ]]; then
-        sleep 8
-    else
-        sleep 4
-    fi
-
-    if systemctl is-active --quiet olcrtc; then
-        # Сохраняем реквизиты для последующего просмотра через пункт 4
-        mkdir -p /opt/olcrtc
-        cat > /opt/olcrtc/.env <<ENV_EOF
+    
+    # Сохраняем реквизиты
+    mkdir -p /opt/olcrtc
+    cat > /opt/olcrtc/.env <<ENV_EOF
 S_PROVIDER="${PROVIDER}"
 S_TRANSPORT="${TRANSPORT}"
 S_ROOM_ID="${ROOM_ID}"
@@ -765,96 +855,157 @@ S_CLIENT_ID="${CLIENT_ID}"
 S_ROOM_PASSWORD="${S_ROOM_PASSWORD}"
 S_BOT_NAME="${BOT_NAME}"
 ENV_EOF
-        chmod 600 /opt/olcrtc/.env
+    chmod 600 /opt/olcrtc/.env
+}
 
-        echo -e "${GREEN}[✔] Служба OlcRTC успешно запущена и стабильно работает!${NC}"
-        echo -e "\n${MAGENTA}=================================================${NC}"
-        echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
-        echo -e "${MAGENTA}=================================================${NC}"
-
-        # Ссылки на конференцию для участников
-        if [[ "$PROVIDER" == "telemost" ]]; then
-            echo -e "Ссылка для участников (Yandex Telemost):"
-            echo -e "  ${YELLOW}https://telemost.yandex.ru/j/${ROOM_ID}${NC}"
-        elif [[ "$PROVIDER" == "wbstream" ]]; then
-            echo -e "Ссылка для участников (WB Stream):"
-            echo -e "  ${YELLOW}https://stream.wb.ru/room/${ROOM_ID}${NC}"
-        elif [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "Ссылка для участников (SaluteJazz):"
-            echo -e "  ${YELLOW}https://salutejazz.ru/calls/${ROOM_ID}${NC}"
-            echo -e "  Код конференции: ${YELLOW}${ROOM_ID}@salutejazz.ru${NC}"
-            echo -e "${GREEN}[+] Имя бота в конференции: ${YELLOW}${BOT_NAME}${NC}"
-        fi
-        echo -e "${MAGENTA}=================================================${NC}"
-
-        echo -e "Ваши данные для подключения в клиенте (Olcbox):"
-        echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
-        echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
-        echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
-        echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
-        echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
-        if [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "Имя бота:\t${YELLOW}$BOT_NAME${NC}"
-        fi
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "URI для быстрого импорта в Olcbox:"
-        echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
-        echo -e "${MAGENTA}=================================================${NC}"
-        echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
-        echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
-        echo -e "${MAGENTA}=================================================${NC}"
-    else
-        echo -e "${RED}[✖] Служба OlcRTC запустилась, но упала!${NC}"
-        echo -e "${CYAN}Последние строки лога:${NC}"
-        RECENT_LOG=$(journalctl -u olcrtc -n 15 --no-pager 2>/dev/null)
-        echo "$RECENT_LOG"
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-
-        # --- Автоматический анализ ошибки ---
-        echo -e "${YELLOW}⚠ Диагностика:${NC}"
-
-        if echo "$RECENT_LOG" | grep -q "status 400" && [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "${RED}  Причина: Jazz API (salutejazz.ru) отклонил подключение (HTTP 400).${NC}"
-            echo -e "${YELLOW}  Это внешняя проблема — IP вашего VPS заблокирован Jazz,${NC}"
-            echo -e "${YELLOW}  либо Jazz изменил свой API.${NC}"
-            echo -e "${GREEN}  Решение: запустите установку снова и выберите провайдер wbstream.${NC}"
-            echo -e "${GREEN}           wbstream — самый стабильный провайдер, без банов.${NC}"
-
-        elif echo "$RECENT_LOG" | grep -q "status 400" && [[ "$PROVIDER" == "telemost" ]]; then
-            echo -e "${RED}  Причина: Telemost API отклонил подключение (HTTP 400).${NC}"
-            echo -e "${YELLOW}  Возможно, Room ID создан вручную неправильно,${NC}"
-            echo -e "${YELLOW}  или Telemost изменил API.${NC}"
-            echo -e "${GREEN}  Решение: создайте новую комнату на telemost.yandex.ru и переустановите.${NC}"
-
-        elif echo "$RECENT_LOG" | grep -q "i/o timeout"; then
-            echo -e "${RED}  Причина: DNS недоступен или VPS заблокировал исходящие соединения.${NC}"
-            echo -e "${GREEN}  Решение 1: переустановите с DNS 8.8.8.8:53 вместо 1.1.1.1:53.${NC}"
-            echo -e "${GREEN}  Решение 2: проверьте iptables/ufw на VPS.${NC}"
-
-        elif echo "$RECENT_LOG" | grep -q "vp8 fps required"; then
-            echo -e "${RED}  Причина: старая запись из лога (до исправления скрипта).${NC}"
-            echo -e "${GREEN}  Решение: перезапустите установку — этот баг уже исправлен.${NC}"
-
-        elif echo "$RECENT_LOG" | grep -q "dial tcp.*refused"; then
-            echo -e "${RED}  Причина: VPS не может подключиться к SFU провайдера.${NC}"
-            echo -e "${GREEN}  Решение: проверьте исходящий доступ к интернету с VPS.${NC}"
-
-        else
-            echo -e "${YELLOW}  Неизвестная ошибка. Полный лог: journalctl -u olcrtc -n 50${NC}"
-        fi
-
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "\n${YELLOW}Ваши данные (сохраните на случай переустановки):${NC}"
-        echo -e "  Провайдер:  ${YELLOW}$PROVIDER${NC}  Транспорт: ${YELLOW}$TRANSPORT${NC}"
-        echo -e "  Room ID:    ${YELLOW}$ROOM_ID${NC}"
-        echo -e "  Ключ:       ${YELLOW}$ENC_KEY${NC}"
-        echo -e "  Client ID: ${YELLOW}$CLIENT_ID${NC}"
-        if [[ "$PROVIDER" == "jazz" ]]; then
-            echo -e "  Имя бота:  ${YELLOW}$BOT_NAME${NC}"
-        fi
+# ─────────────────────────────────────────────────────────────
+# Функция установки (с умной проверкой обновлений)
+# ─────────────────────────────────────────────────────────────
+install_olcrtc() {
+    # Проверяем наличие предыдущей установки
+    local EXISTING_INSTALL=false
+    if [ -f /etc/systemd/system/olcrtc.service ] || [ -f /opt/olcrtc/olcrtc ]; then
+        EXISTING_INSTALL=true
     fi
-
+    
+    # Проверяем обновления
+    local UPDATE_NEEDED
+    UPDATE_NEEDED=$(check_for_updates)
+    
+    # Обработка опции удаления/переустановки
+    if [ "$EXISTING_INSTALL" = true ]; then
+        print_logo
+        echo -e "${MAGENTA}=================================================${NC}"
+        echo -e "${YELLOW}   ⚠  Обнаружена предыдущая установка OlcRTC!   ${NC}"
+        echo -e "${MAGENTA}=================================================${NC}"
+        
+        if [ "$UPDATE_NEEDED" = "update" ]; then
+            echo -e "${CYAN}Доступно обновление бинарника.${NC}"
+        else
+            echo -e "${GREEN}Бинарник уже актуален.${NC}"
+        fi
+        
+        echo -e "${YELLOW}Вы можете:${NC}"
+        echo -e "  ${GREEN}1)${NC} Обновить конфигурацию (изменить комнату/транспорт)"
+        echo -e "  ${RED}2)${NC} Переустановить с нуля (удалить всё и собрать заново)"
+        echo -e "  ${CYAN}3)${NC} Только обновить бинарник (без изменения конфигурации)"
+        echo -e "  ${MAGENTA}0)${NC} Назад в главное меню"
+        read -p "Ваш выбор (0-3): " reinstall_choice
+        
+        case $reinstall_choice in
+            0) return ;;
+            1)
+                # Только обновить конфигурацию (быстрый путь)
+                if request_credentials; then
+                    apply_configuration "$PROVIDER" "$TRANSPORT" "$ROOM_ID" "$ENC_KEY" "$CLIENT_ID" "$BOT_NAME" "$S_ROOM_PASSWORD" "$FULL_INVITE_LINK"
+                    show_success_message
+                fi
+                return
+                ;;
+            2)
+                # Полная переустановка
+                echo -e "${CYAN}Выполняем полную очистку...${NC}"
+                silent_wipe
+                echo -e "${GREEN}Очистка завершена.${NC}"
+                sleep 1
+                UPDATE_NEEDED="update"
+                ;;
+            3)
+                # Только обновить бинарник
+                if [ "$UPDATE_NEEDED" = "update" ]; then
+                    build_olcrtc_binary "telemost" "" ""  # Параметры Jazz будут взяты из текущей конфигурации если есть
+                    # После сборки перечитаем старую конфигурацию если она была
+                    if [ -f /opt/olcrtc/.env ]; then
+                        source /opt/olcrtc/.env
+                    fi
+                    echo -e "${GREEN}✓ Бинарник обновлён!${NC}"
+                    read -p "Нажмите Enter для возврата в меню..."
+                else
+                    echo -e "${GREEN}✓ Бинарник уже актуален. Обновление не требуется.${NC}"
+                    read -p "Нажмите Enter для возврата в меню..."
+                fi
+                return
+                ;;
+            *)
+                echo -e "${RED}Неверный выбор.${NC}"
+                sleep 1
+                return
+                ;;
+        esac
+    fi
+    
+    # Сценарий А: Новая установка или обновление с пересборкой
+    if [ "$UPDATE_NEEDED" = "update" ]; then
+        # Запрашиваем реквизиты
+        if ! request_credentials; then
+            return
+        fi
+        
+        # Собираем бинарник
+        build_olcrtc_binary "$PROVIDER" "$S_ROOM_PASSWORD" "$BOT_NAME"
+        
+        # Применяем конфигурацию
+        apply_configuration "$PROVIDER" "$TRANSPORT" "$ROOM_ID" "$ENC_KEY" "$CLIENT_ID" "$BOT_NAME" "$S_ROOM_PASSWORD" "$FULL_INVITE_LINK"
+        
+        show_success_message
+    else
+        # Сценарий Б: Актуальная система - только быстрая настройка
+        quick_configure
+        
+        if ! request_credentials; then
+            return
+        fi
+        
+        apply_configuration "$PROVIDER" "$TRANSPORT" "$ROOM_ID" "$ENC_KEY" "$CLIENT_ID" "$BOT_NAME" "$S_ROOM_PASSWORD" "$FULL_INVITE_LINK"
+        
+        show_success_message
+    fi
+    
     read -p "Нажмите Enter для возврата в меню..."
+}
+
+# ─────────────────────────────────────────────────────────────
+# Показать сообщение об успешной установке
+# ─────────────────────────────────────────────────────────────
+show_success_message() {
+    echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}[✔] Конфигурация применена успешно!${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN} УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    # Ссылки на конференцию для участников (с полной ссылкой включая пароль)
+    if [[ "$PROVIDER" == "telemost" ]]; then
+        echo -e "Ссылка для участников (Yandex Telemost):"
+        echo -e "  ${YELLOW}${FULL_INVITE_LINK}${NC}"
+    elif [[ "$PROVIDER" == "wbstream" ]]; then
+        echo -e "Ссылка для участников (WB Stream):"
+        echo -e "  ${YELLOW}${FULL_INVITE_LINK}${NC}"
+    elif [[ "$PROVIDER" == "jazz" ]]; then
+        echo -e "Ссылка для участников (SaluteJazz):"
+        echo -e "  ${YELLOW}${FULL_INVITE_LINK}${NC}"
+        echo -e "  Код конференции: ${YELLOW}${ROOM_ID}@salutejazz.ru${NC}"
+        echo -e "${GREEN}[+] Имя бота в конференции: ${YELLOW}${BOT_NAME}${NC}"
+    fi
+    echo -e "${MAGENTA}=================================================${NC}"
+
+    echo -e "Ваши данные для подключения в клиенте (Olcbox):"
+    echo -e "Провайдер:\t${YELLOW}$PROVIDER${NC}"
+    echo -e "Транспорт:\t${YELLOW}$TRANSPORT${NC}"
+    echo -e "ID звонка:\t${YELLOW}$ROOM_ID${NC}"
+    echo -e "Ключ:\t\t${YELLOW}$ENC_KEY${NC}"
+    echo -e "ID клиента:\t${YELLOW}$CLIENT_ID${NC}"
+    if [[ "$PROVIDER" == "jazz" ]]; then
+        echo -e "Имя бота:\t${YELLOW}$BOT_NAME${NC}"
+    fi
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "URI для быстрого импорта в Olcbox:"
+    echo -e "${YELLOW}olcrtc://${PROVIDER}?${TRANSPORT}@${ROOM_ID}#${ENC_KEY}%${CLIENT_ID}\$OlcRTC_Server${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
+    echo -e "${GREEN}📥 Скачайте приложение Olcbox для вашей системы:${NC}"
+    echo -e "  ${CYAN}https://github.com/alananisimov/olcbox/releases${NC}"
+    echo -e "${MAGENTA}=================================================${NC}"
 }
 
 # Функция удаления
