@@ -1,8 +1,23 @@
 #!/bin/bash
 
-echo -e "\e[34m[1/6] Установка зависимостей...\e[0m"
+echo -e "\e[34m[1/6] Установка свежей версии Go и зависимостей...\e[0m"
 apt-get update -y > /dev/null 2>&1
-apt-get install -y golang curl > /dev/null 2>&1
+apt-get install -y curl wget git tar > /dev/null 2>&1
+
+# Удаляем старый системный Go (чтобы избежать конфликтов)
+apt-get remove -y golang-go golang > /dev/null 2>&1
+rm -rf /usr/local/go
+
+# Узнаем самую последнюю версию Go напрямую с серверов Google
+LATEST_GO=$(curl -s https://go.dev/VERSION?m=text | head -n 1)
+echo -e "\e[32m➤ Скачиваем и устанавливаем ${LATEST_GO}...\e[0m"
+
+# Скачиваем, распаковываем и прописываем пути
+wget -qO go.tar.gz "https://go.dev/dl/${LATEST_GO}.linux-amd64.tar.gz"
+tar -C /usr/local -xzf go.tar.gz
+rm go.tar.gz
+ln -sf /usr/local/go/bin/go /usr/bin/go
+ln -sf /usr/local/go/bin/gofmt /usr/bin/gofmt
 
 echo -e "\e[34m[2/6] Подготовка директорий...\e[0m"
 mkdir -p /opt/olc-ui/templates
@@ -34,20 +49,17 @@ func main() {
 	fs := http.FileServer(http.Dir("./templates"))
 	http.Handle("/", fs)
 
-	// API: Проверка статуса
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		out, _ := exec.Command("systemctl", "is-active", "olcrtc").Output()
 		status := strings.TrimSpace(string(out))
 		json.NewEncoder(w).Encode(map[string]bool{"active": status == "active"})
 	})
 
-	// API: Просмотр логов
 	http.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		out, _ := exec.Command("journalctl", "-u", "olcrtc", "-n", "50", "--no-pager").Output()
 		w.Write(out)
 	})
 
-	// API: Удаление
 	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
 		exec.Command("systemctl", "stop", "olcrtc").Run()
 		exec.Command("systemctl", "disable", "olcrtc").Run()
@@ -56,7 +68,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// API: Установка (Как в скрипте)
 	http.HandleFunc("/api/install", func(w http.ResponseWriter, r *http.Request) {
 		var c Config
 		json.NewDecoder(r.Body).Decode(&c)
@@ -64,18 +75,14 @@ func main() {
 		key := "698ea7dc7927515c2583075b984cb3bf1134d1e9bd5963f3bf5b4a03fdcd1179"
 		clientID := "9cf2464e"
 		
-		// Логика Шага 1 (Провайдер)
 		carrier := "yandex"
 		if c.Provider == "1" { carrier = "yandex" }
 		if c.Provider == "2" { carrier = "wbstream" }
 		if c.Provider == "3" { carrier = "jazz" }
 
-		// Логика Шага 3 (Очистка ссылки)
 		roomID := strings.TrimSpace(c.RoomLink)
-
 		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, roomID, key, clientID)
 		
-		// Логика Шага 2 (Транспорт)
 		if c.Transport == "2" {
 			execCmd += " -transport videochannel -video-w 640 -video-h 480 -video-fps 30 -video-bitrate 1000000 -video-hw none"
 		} else {
@@ -105,7 +112,6 @@ WantedBy=multi-user.target`, execCmd)
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// API: Реквизиты
 	http.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
 		content, err := os.ReadFile("/etc/systemd/system/olcrtc.service")
 		if err != nil {
@@ -149,14 +155,12 @@ cat << 'EOF' > templates/index.html
         .view.active { display: block; animation: fadeIn 0.3s; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Стили кнопок главного меню */
         .menu-list { list-style: none; padding: 0; margin: 0; }
         .menu-list li { border-bottom: 1px solid #eee; }
         .menu-list li:last-child { border-bottom: none; }
         .menu-btn { width: 100%; text-align: left; background: transparent; border: none; padding: 18px 25px; font-size: 1.1rem; color: #2c3e50; font-weight: 500; transition: 0.2s; }
         .menu-btn:hover { background: #f8f9fa; color: #0d6efd; padding-left: 30px; }
         
-        /* Стили формы установки (Шаги) */
         .step-header { color: #0d6efd; font-weight: 600; margin-bottom: 15px; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; }
         .radio-card { display: block; padding: 15px; border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: 0.2s; }
         .radio-card:hover { border-color: #0d6efd; background: #f8f9fa; }
@@ -294,13 +298,11 @@ cat << 'EOF' > templates/index.html
             let link = document.getElementById('roomLink').value;
             if(!link) { alert('Пожалуйста, введите ID звонка или ссылку!'); return; }
 
-            // Собираем данные с радио-кнопок
             let provider = document.querySelector('input[name="provider"]:checked').value;
             let transport = document.querySelector('input[name="transport"]:checked').value;
 
             let config = { provider: provider, transport: transport, roomLink: link };
             
-            // Визуально показываем загрузку
             let btn = event.target;
             let oldText = btn.innerText;
             btn.innerText = "Установка..."; btn.disabled = true;
@@ -313,7 +315,7 @@ cat << 'EOF' > templates/index.html
 
             btn.innerText = oldText; btn.disabled = false;
             alert('Установка успешно завершена! Служба запущена.');
-            openInfo(); // Перекидываем на статус
+            openInfo();
         }
 
         async function deleteService() {
@@ -335,7 +337,6 @@ cat << 'EOF' > templates/index.html
         async function openInfo() {
             showView('view-info');
             
-            // Получаем статус
             let resStatus = await fetch('/api/status');
             let dataStatus = await resStatus.json();
             let badge = document.getElementById('status-badge');
@@ -345,7 +346,6 @@ cat << 'EOF' > templates/index.html
                 badge.className = 'badge bg-danger'; badge.innerText = 'Остановлена (Offline)';
             }
 
-            // Получаем настройки из файла Linux
             let resInfo = await fetch('/api/info');
             let dataInfo = await resInfo.json();
             
@@ -373,7 +373,7 @@ systemctl restart olc-ui
 
 IP=$(curl -s ifconfig.me)
 echo -e "\e[32m=======================================================\e[0m"
-echo -e "✅ ГРАФИЧЕСКИЙ ИНТЕРФЕЙС УСТАНОВЩИКА ГОТОВ!"
-echo -e "🌐 Откройте в браузере (светлая тема):"
+echo -e "✅ ГРАФИЧЕСКИЙ ИНТЕРФЕЙС И GO УСТАНОВЛЕНЫ!"
+echo -e "🌐 Откройте в браузере:"
 echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
 echo -e "\e[32m=======================================================\e[0m"
