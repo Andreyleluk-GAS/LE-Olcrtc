@@ -25,9 +25,9 @@ import (
 )
 
 type Config struct {
-	Platform string `json:"platform"`
-	Link     string `json:"link"`
-	Tunnel   string `json:"tunnel"`
+	Provider  string `json:"provider"`
+	Transport string `json:"transport"`
+	RoomLink  string `json:"roomLink"`
 }
 
 func main() {
@@ -47,7 +47,7 @@ func main() {
 		w.Write(out)
 	})
 
-	// API: Удаление (Остановка и удаление службы)
+	// API: Удаление
 	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
 		exec.Command("systemctl", "stop", "olcrtc").Run()
 		exec.Command("systemctl", "disable", "olcrtc").Run()
@@ -56,40 +56,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// API: Реквизиты (Чтение текущей конфигурации из файла)
-	http.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
-		content, err := os.ReadFile("/etc/systemd/system/olcrtc.service")
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]string{"error": "Служба не установлена"})
-			return
-		}
-		
-		str := string(content)
-		carrier := "Неизвестно"
-		if strings.Contains(str, "-carrier jazz") { carrier = "SberJazz" }
-		if strings.Contains(str, "-carrier yandex") { carrier = "Яндекс Телемост" }
-		if strings.Contains(str, "-carrier custom") { carrier = "WebRTC" }
-
-		link := ""
-		if strings.Contains(str, "-carrier yandex") {
-			re := regexp.MustCompile(`-link direct[^\n]+-id "([^"]+)"`)
-			if m := re.FindStringSubmatch(str); len(m) > 1 { link = m[1] }
-		} else {
-			re := regexp.MustCompile(`-id "([^"]+)"`)
-			if m := re.FindStringSubmatch(str); len(m) > 1 { link = m[1] }
-		}
-
-		tunnel := "vp8channel (Стандартный)"
-		if strings.Contains(str, "-transport videochannel") { tunnel = "videochannel (FFmpeg)" }
-
-		json.NewEncoder(w).Encode(map[string]string{
-			"platform": carrier,
-			"link": link,
-			"tunnel": tunnel,
-		})
-	})
-
-	// API: Установить (Создание службы и запуск)
+	// API: Установка (Как в скрипте)
 	http.HandleFunc("/api/install", func(w http.ResponseWriter, r *http.Request) {
 		var c Config
 		json.NewDecoder(r.Body).Decode(&c)
@@ -97,15 +64,19 @@ func main() {
 		key := "698ea7dc7927515c2583075b984cb3bf1134d1e9bd5963f3bf5b4a03fdcd1179"
 		clientID := "9cf2464e"
 		
-		carrier := "custom"
-		if c.Platform == "2" { carrier = "custom" } // WebRTC
-		if c.Platform == "3" { carrier = "jazz" }   // SberJazz
-		if c.Platform == "1" { carrier = "yandex" } // Yandex
+		// Логика Шага 1 (Провайдер)
+		carrier := "yandex"
+		if c.Provider == "1" { carrier = "yandex" }
+		if c.Provider == "2" { carrier = "wbstream" }
+		if c.Provider == "3" { carrier = "jazz" }
 
-		// Формируем команду, как в консольном скрипте
-		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, c.Link, key, clientID)
+		// Логика Шага 3 (Очистка ссылки)
+		roomID := strings.TrimSpace(c.RoomLink)
+
+		execCmd := fmt.Sprintf("/opt/olcrtc/olcrtc -mode srv -carrier %s -link direct -dns 1.1.1.1:53 -data data -id \"%s\" -key \"%s\" -client-id \"%s\"", carrier, roomID, key, clientID)
 		
-		if c.Tunnel == "1" {
+		// Логика Шага 2 (Транспорт)
+		if c.Transport == "2" {
 			execCmd += " -transport videochannel -video-w 640 -video-h 480 -video-fps 30 -video-bitrate 1000000 -video-hw none"
 		} else {
 			execCmd += " -transport vp8channel -vp8-fps 60 -vp8-batch 64"
@@ -134,124 +105,183 @@ WantedBy=multi-user.target`, execCmd)
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// API: Реквизиты
+	http.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
+		content, err := os.ReadFile("/etc/systemd/system/olcrtc.service")
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Служба не установлена"})
+			return
+		}
+		str := string(content)
+		carrier := "Неизвестно"
+		if strings.Contains(str, "-carrier yandex") { carrier = "telemost (Yandex)" }
+		if strings.Contains(str, "-carrier wbstream") { carrier = "wbstream (Wildberries)" }
+		if strings.Contains(str, "-carrier jazz") { carrier = "jazz (Sber SaluteJazz)" }
+
+		link := ""
+		re := regexp.MustCompile(`-id "([^"]+)"`)
+		if m := re.FindStringSubmatch(str); len(m) > 1 { link = m[1] }
+
+		tunnel := "1) vp8channel"
+		if strings.Contains(str, "-transport videochannel") { tunnel = "2) videochannel" }
+
+		json.NewEncoder(w).Encode(map[string]string{"platform": carrier, "link": link, "tunnel": tunnel})
+	})
+
 	log.Println("Olc-UI Backend is running on port 8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 EOF
 
-echo -e "\e[34m[4/6] Создание фронтенда...\e[0m"
+echo -e "\e[34m[4/6] Создание светлого фронтенда...\e[0m"
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
-<html lang="ru" data-bs-theme="dark">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OlcRTC Установщик</title>
+    <title>Установка OlcRTC</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: monospace; }
-        .menu-btn { display: block; width: 100%; text-align: left; background: #1e1e1e; border: 1px solid #333; color: #fff; padding: 15px 20px; margin-bottom: 10px; cursor: pointer; transition: 0.2s; font-size: 1.1rem; }
-        .menu-btn:hover { background: #2a2a2a; border-color: #555; }
-        .menu-btn span { color: #0d6efd; font-weight: bold; margin-right: 15px; }
+        body { background-color: #f4f6f9; color: #333; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .main-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); overflow: hidden; border: 1px solid #e9ecef; }
         .view { display: none; }
-        .view.active { display: block; }
-        .console-box { background: #000; color: #0f0; padding: 15px; border-radius: 5px; height: 350px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; }
+        .view.active { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Стили кнопок главного меню */
+        .menu-list { list-style: none; padding: 0; margin: 0; }
+        .menu-list li { border-bottom: 1px solid #eee; }
+        .menu-list li:last-child { border-bottom: none; }
+        .menu-btn { width: 100%; text-align: left; background: transparent; border: none; padding: 18px 25px; font-size: 1.1rem; color: #2c3e50; font-weight: 500; transition: 0.2s; }
+        .menu-btn:hover { background: #f8f9fa; color: #0d6efd; padding-left: 30px; }
+        
+        /* Стили формы установки (Шаги) */
+        .step-header { color: #0d6efd; font-weight: 600; margin-bottom: 15px; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; }
+        .radio-card { display: block; padding: 15px; border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: 0.2s; }
+        .radio-card:hover { border-color: #0d6efd; background: #f8f9fa; }
+        .radio-card input[type="radio"] { margin-right: 10px; }
+        
+        .console-box { background: #1e1e1e; color: #0f0; padding: 15px; border-radius: 8px; height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.9rem; }
     </style>
 </head>
 <body>
-    <div class="container mt-5" style="max-width: 600px;">
-        <h3 class="mb-4 text-center border-bottom border-secondary pb-3">Установщик OlcRTC Proxy</h3>
-
-        <div id="view-menu" class="view active">
-            <p class="text-muted mb-4 text-center">Выберите действие:</p>
-            
-            <button class="menu-btn" onclick="showView('view-install')">
-                <span>[ 1 ]</span> Установить (Настроить платформу)
-            </button>
-            <button class="menu-btn" onclick="deleteService()">
-                <span>[ 2 ]</span> Удалить службу
-            </button>
-            <button class="menu-btn" onclick="openLogs()">
-                <span>[ 3 ]</span> Посмотреть логи
-            </button>
-            <button class="menu-btn" onclick="openInfo()">
-                <span>[ 4 ]</span> Проверить статус / Реквизиты
-            </button>
-            <button class="menu-btn" onclick="exitApp()">
-                <span>[ 0 ]</span> Выйти
-            </button>
+    <div class="container mt-5 mb-5" style="max-width: 750px;">
+        <div class="text-center mb-4">
+            <h2 class="fw-bold" style="color: #2c3e50;">Интерактивная установка OlcRTC</h2>
+            <p class="text-muted">Графический интерфейс прокси-сервера</p>
         </div>
 
-        <div id="view-install" class="view">
-            <div class="card bg-dark border-secondary">
-                <div class="card-header bg-secondary text-white">Мастер установки</div>
-                <div class="card-body p-4">
-                    
-                    <div class="mb-3">
-                        <label class="form-label text-warning">Выберите платформу:</label>
-                        <select id="platform" class="form-select bg-dark text-white border-secondary" onchange="updateForm()">
-                            <option value="1">1. Яндекс Телемост</option>
-                            <option value="2">2. WebRTC</option>
-                            <option value="3">3. SberJazz</option>
-                        </select>
-                    </div>
+        <div class="main-card">
+            
+            <div id="view-menu" class="view active">
+                <ul class="menu-list">
+                    <li><button class="menu-btn" onclick="showView('view-install')">🛠 Установить (Настройка конфигурации)</button></li>
+                    <li><button class="menu-btn" onclick="deleteService()">🗑 Удалить службу</button></li>
+                    <li><button class="menu-btn" onclick="openLogs()">📋 Посмотреть логи</button></li>
+                    <li><button class="menu-btn" onclick="openInfo()">ℹ️ Проверить статус / Реквизиты</button></li>
+                </ul>
+            </div>
 
-                    <div id="ya-helper" class="p-3 mb-3 border border-secondary rounded bg-dark d-block">
-                        <p class="mb-2">Для Яндекса необходимо сгенерировать ссылку:</p>
-                        <a href="https://telemost.yandex.ru/" target="_blank" class="btn btn-primary btn-sm mb-2">Открыть Телемост и создать встречу</a>
-                    </div>
+            <div id="view-install" class="view p-4">
+                <div class="alert alert-warning border-warning border-start border-4 mb-4" style="background-color: #fff3cd; color: #856404;">
+                    <strong>ВНИМАНИЕ:</strong> Перед продолжением вы должны ВРУЧНУЮ создать комнату на сайте провайдера и скопировать ссылку-приглашение!
+                </div>
 
-                    <div class="mb-3">
-                        <label class="form-label text-warning" id="link-label">Вставьте ссылку на встречу:</label>
-                        <input type="text" id="link" class="form-control bg-dark text-white border-secondary" placeholder="https://telemost.yandex.ru/j/...">
+                <form id="installForm">
+                    <div class="mb-4">
+                        <h5 class="step-header">Шаг 1: Выберите провайдера</h5>
+                        
+                        <label class="radio-card">
+                            <input type="radio" name="provider" value="1" checked>
+                            <strong>1) telemost (Yandex)</strong> <span class="text-success">— стабильно работает</span>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="provider" value="2">
+                            <strong>2) wbstream (Wildberries)</strong> <span class="text-muted">— работает, но не у всех и не всегда</span>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="provider" value="3">
+                            <strong>3) jazz (Sber SaluteJazz)</strong> <span class="text-danger">— пока НЕ работает (система блокирует от VPS)</span>
+                        </label>
                     </div>
 
                     <div class="mb-4">
-                        <label class="form-label text-warning">Выберите туннель:</label>
-                        <select id="tunnel" class="form-select bg-dark text-white border-secondary">
-                            <option value="1">1. Videochannel (FFmpeg)</option>
-                            <option value="2">2. VP8Channel (Стандартный)</option>
-                        </select>
+                        <h5 class="step-header">Шаг 2: Выберите тип транспорта</h5>
+                        <div class="alert alert-danger py-2 px-3 mb-3 small">
+                            ⚠️ Для Telemost провайдера: datachannel и seichannel - не поддерживаются!
+                        </div>
+                        
+                        <label class="radio-card">
+                            <input type="radio" name="transport" value="1" checked>
+                            <strong>1) vp8channel</strong> <span class="badge bg-success ms-2">рекомендуется</span> <span class="text-muted ms-1">(высокая скорость)</span>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="transport" value="2">
+                            <strong>2) videochannel</strong> <span class="text-muted ms-1">(низкая скорость)</span>
+                        </label>
                     </div>
 
-                    <div class="d-flex justify-content-between">
-                        <button class="btn btn-outline-secondary" onclick="showView('view-menu')">Отмена</button>
-                        <button class="btn btn-success px-4" onclick="installBot()">Сохранить (OK)</button>
+                    <div class="mb-4">
+                        <h5 class="step-header">Шаг 3: Настройка ID звонка (комнаты)</h5>
+                        
+                        <div class="bg-light p-3 rounded border mb-3 small text-muted">
+                            <strong>💡 Как получить ID звонка?</strong><br>
+                            ID звонка — это идентификатор конференции, внутри которой прячется трафик.<br>
+                            Создайте комнату и скопируйте ID (код в конце ссылки) или вставьте ссылку целиком:<br>
+                            ▶ WB Stream: <code>https://stream.wb.ru/room/[ваш_id]</code><br>
+                            ▶ Yandex Telemost: <code>https://telemost.yandex.ru/j/[ваш_id]</code><br>
+                            ▶ SaluteJazz: <code>https://salutejazz.ru/calls/[ваш_id]</code>
+                        </div>
+
+                        <label class="form-label fw-bold">Введите ID звонка или полную ссылку:</label>
+                        <input type="text" id="roomLink" class="form-control form-control-lg border-primary shadow-sm" placeholder="Например: https://telemost.yandex.ru/j/36561031851482">
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4 border-top pt-3">
+                        <button type="button" class="btn btn-light border" onclick="showView('view-menu')">← Назад в меню</button>
+                        <button type="button" class="btn btn-primary px-5" onclick="installBot()">Установить и Запустить</button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="view-logs" class="view p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0 text-primary fw-bold">Системные логи (journalctl)</h5>
+                    <button class="btn btn-sm btn-light border" onclick="showView('view-menu')">← Назад</button>
+                </div>
+                <div id="log-output" class="console-box mb-3">Загрузка логов...</div>
+                <button class="btn btn-outline-primary w-100" onclick="openLogs()">🔄 Обновить логи</button>
+            </div>
+
+            <div id="view-info" class="view p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
+                    <h5 class="mb-0 text-primary fw-bold">Статус и Реквизиты</h5>
+                    <button class="btn btn-sm btn-light border" onclick="showView('view-menu')">← Назад</button>
+                </div>
+                
+                <div class="mb-4">
+                    <span class="text-muted">Статус службы systemd:</span><br>
+                    <span id="status-badge" class="badge bg-secondary fs-6 mt-1">Проверка...</span>
+                </div>
+
+                <div class="bg-light p-3 rounded border">
+                    <div class="mb-3">
+                        <small class="text-muted d-block">Установленный провайдер:</small>
+                        <strong id="info-platform" class="fs-5 text-dark">-</strong>
+                    </div>
+                    <div class="mb-3">
+                        <small class="text-muted d-block">Тип транспорта:</small>
+                        <strong id="info-tunnel" class="fs-5 text-dark">-</strong>
+                    </div>
+                    <div>
+                        <small class="text-muted d-block">ID звонка / Ссылка:</small>
+                        <strong id="info-link" class="text-primary" style="word-break: break-all;">-</strong>
                     </div>
                 </div>
             </div>
+
         </div>
-
-        <div id="view-logs" class="view">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="mb-0">Журнал работы (Logs)</h5>
-                <button class="btn btn-sm btn-outline-light" onclick="showView('view-menu')">Назад в меню</button>
-            </div>
-            <div id="log-output" class="console-box">Загрузка...</div>
-            <button class="btn btn-primary mt-3 w-100" onclick="openLogs()">Обновить логи</button>
-        </div>
-
-        <div id="view-info" class="view">
-            <div class="card bg-dark border-secondary">
-                <div class="card-header bg-secondary text-white d-flex justify-content-between">
-                    <span>Текущие настройки сервера</span>
-                    <span id="status-badge" class="badge bg-danger">Остановлено</span>
-                </div>
-                <div class="card-body p-4">
-                    <p class="text-muted mb-1">Платформа:</p>
-                    <h5 id="info-platform" class="text-info mb-3">-</h5>
-                    
-                    <p class="text-muted mb-1">Ссылка / ID:</p>
-                    <h5 id="info-link" class="text-success mb-3" style="word-break: break-all;">-</h5>
-                    
-                    <p class="text-muted mb-1">Туннель:</p>
-                    <h5 id="info-tunnel" class="text-warning mb-4">-</h5>
-
-                    <button class="btn btn-outline-light w-100" onclick="showView('view-menu')">Вернуться в меню</button>
-                </div>
-            </div>
-        </div>
-
     </div>
 
     <script>
@@ -260,45 +290,34 @@ cat << 'EOF' > templates/index.html
             document.getElementById(id).classList.add('active');
         }
 
-        function updateForm() {
-            let p = document.getElementById('platform').value;
-            let helper = document.getElementById('ya-helper');
-            let label = document.getElementById('link-label');
-            let input = document.getElementById('link');
-
-            if(p === "1") { // Yandex
-                helper.style.display = 'block';
-                label.innerText = 'Вставьте ссылку на встречу:';
-                input.placeholder = 'https://telemost.yandex.ru/j/...';
-            } else {
-                helper.style.display = 'none';
-                label.innerText = 'Введите ID комнаты:';
-                input.placeholder = 'nlg7d4';
-            }
-        }
-
         async function installBot() {
-            let link = document.getElementById('link').value;
-            if(!link) { alert('Ошибка: Введите ссылку или ID!'); return; }
+            let link = document.getElementById('roomLink').value;
+            if(!link) { alert('Пожалуйста, введите ID звонка или ссылку!'); return; }
 
-            let config = {
-                platform: document.getElementById('platform').value,
-                link: link,
-                tunnel: document.getElementById('tunnel').value
-            };
+            // Собираем данные с радио-кнопок
+            let provider = document.querySelector('input[name="provider"]:checked').value;
+            let transport = document.querySelector('input[name="transport"]:checked').value;
+
+            let config = { provider: provider, transport: transport, roomLink: link };
             
+            // Визуально показываем загрузку
+            let btn = event.target;
+            let oldText = btn.innerText;
+            btn.innerText = "Установка..."; btn.disabled = true;
+
             await fetch('/api/install', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(config)
             });
 
-            alert('Установка завершена! Конфигурация применена.');
-            showView('view-menu');
+            btn.innerText = oldText; btn.disabled = false;
+            alert('Установка успешно завершена! Служба запущена.');
+            openInfo(); // Перекидываем на статус
         }
 
         async function deleteService() {
-            if(confirm("Вы уверены, что хотите полностью удалить бота и сбросить настройки?")) {
+            if(confirm("Вы действительно хотите удалить службу OlcRTC?")) {
                 await fetch('/api/delete');
                 alert('Служба удалена.');
             }
@@ -309,45 +328,37 @@ cat << 'EOF' > templates/index.html
             let res = await fetch('/api/logs');
             let text = await res.text();
             let logBox = document.getElementById('log-output');
-            logBox.innerText = text || "Нет данных. Служба не запущена.";
+            logBox.innerText = text || "Служба не запущена или логов нет.";
             logBox.scrollTop = logBox.scrollHeight;
         }
 
         async function openInfo() {
             showView('view-info');
             
-            // Запрашиваем статус работы
+            // Получаем статус
             let resStatus = await fetch('/api/status');
             let dataStatus = await resStatus.json();
             let badge = document.getElementById('status-badge');
             if(dataStatus.active) {
-                badge.className = 'badge bg-success'; badge.innerText = 'Работает (Active)';
+                badge.className = 'badge bg-success'; badge.innerText = 'Активна (Online)';
             } else {
-                badge.className = 'badge bg-danger'; badge.innerText = 'Остановлено';
+                badge.className = 'badge bg-danger'; badge.innerText = 'Остановлена (Offline)';
             }
 
-            // Запрашиваем реквизиты (чтение конфига)
+            // Получаем настройки из файла Linux
             let resInfo = await fetch('/api/info');
             let dataInfo = await resInfo.json();
             
             if(dataInfo.error) {
                 document.getElementById('info-platform').innerText = "Не настроено";
-                document.getElementById('info-link').innerText = "-";
                 document.getElementById('info-tunnel').innerText = "-";
+                document.getElementById('info-link').innerText = "-";
             } else {
                 document.getElementById('info-platform').innerText = dataInfo.platform;
-                document.getElementById('info-link').innerText = dataInfo.link;
                 document.getElementById('info-tunnel').innerText = dataInfo.tunnel;
+                document.getElementById('info-link').innerText = dataInfo.link;
             }
         }
-
-        function exitApp() {
-            alert("Вы можете просто закрыть эту вкладку браузера.");
-            window.close();
-        }
-
-        // Инициализация формы при старте
-        updateForm();
     </script>
 </body>
 </html>
@@ -356,13 +367,13 @@ EOF
 echo -e "\e[34m[5/6] Компиляция панели...\e[0m"
 go build -o olc-ui-bin main.go
 
-echo -e "\e[34m[6/6] Перезапуск...\e[0m"
+echo -e "\e[34m[6/6] Перезапуск службы...\e[0m"
 systemctl daemon-reload
 systemctl restart olc-ui
 
 IP=$(curl -s ifconfig.me)
 echo -e "\e[32m=======================================================\e[0m"
-echo -e "✅ ГРАФИЧЕСКИЙ УСТАНОВЩИК ГОТОВ!"
-echo -e "🌐 Перейдите по ссылке:"
+echo -e "✅ ГРАФИЧЕСКИЙ ИНТЕРФЕЙС УСТАНОВЩИКА ГОТОВ!"
+echo -e "🌐 Откройте в браузере (светлая тема):"
 echo -e "👉 \e[1;36mhttp://$IP:8080\e[0m"
 echo -e "\e[32m=======================================================\e[0m"
