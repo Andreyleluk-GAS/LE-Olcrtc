@@ -277,6 +277,34 @@ build_olcrtc_binary() {
     fi
     echo -e "${GREEN}Свободно: ${FREE_DISPLAY} — достаточно для сборки.${NC}"
 
+    # --- ЗАЩИТА ОТ НЕДОСТАТКА ПАМЯТИ (OOM KILLER) ---
+    echo -e "${YELLOW}  ➤ Настройка виртуальной памяти (Swap) для защиты от падений...${NC}"
+    swapoff -a 2>/dev/null || true
+    rm -f /swapfile 2>/dev/null || true
+
+    # Динамический расчет размера Swap в зависимости от свободного места на диске
+    FREE_KB_FOR_SWAP=$(df / --output=avail 2>/dev/null | tail -1)
+    FREE_KB_FOR_SWAP=${FREE_KB_FOR_SWAP:-0}
+
+    if [ "$FREE_KB_FOR_SWAP" -ge 6291456 ]; then      # Свободно > 6 GB
+        SWAP_SIZE="4G"
+    elif [ "$FREE_KB_FOR_SWAP" -ge 4194304 ]; then    # Свободно > 4 GB
+        SWAP_SIZE="3G"
+    else                                              # Иначе базовые 2 GB
+        SWAP_SIZE="2G"
+    fi
+
+    echo -e "${CYAN}    Создаем Swap-файл размером: ${SWAP_SIZE}${NC}"
+    fallocate -l $SWAP_SIZE /swapfile 2>/dev/null || true
+    chmod 600 /swapfile 2>/dev/null || true
+    mkswap /swapfile > /dev/null 2>&1 || true
+    swapon /swapfile 2>/dev/null || true
+
+    echo -e "${YELLOW}  ➤ Ограничение потоков компилятора до 1...${NC}"
+    export GOMAXPROCS=1
+    export GOFLAGS="-p=1"
+    # ------------------------------------------------
+
     # --- Клонирование исходников ---
     cd ~
     rm -rf olcrtc
@@ -320,11 +348,6 @@ build_olcrtc_binary() {
     mkdir -p ~/go/tmp ~/go/cache
     export GOTMPDIR=~/go/tmp
     export GOCACHE=~/go/cache
-
-    # Адаптивный параллелизм: зависит от свободного места и числа ядер
-    calc_build_flags
-    echo -e "${CYAN}Режим сборки: ${BUILD_SPEED_MSG}"
-    [ -n "$BUILD_PARALLEL_FLAGS" ] && export GOFLAGS="$BUILD_PARALLEL_FLAGS"
 
     BUILD_LOG=~/olcrtc_build.log
 
